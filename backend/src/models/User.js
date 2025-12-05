@@ -36,10 +36,6 @@ module.exports = (sequelize) => {
       type: DataTypes.STRING,
       allowNull: true,
       validate: {
-        len: {
-          args: [10, 20],
-          msg: 'Phone number must be between 10 and 20 characters'
-        },
         // Add custom validator to skip validation if empty
         isValidPhone(value) {
           if (value && value.length > 0 && (value.length < 10 || value.length > 20)) {

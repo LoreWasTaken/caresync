@@ -3,3 +3,4 @@ logs/
 *.logs
 database.sqlite
 .snapshotignore
+pythonTest/

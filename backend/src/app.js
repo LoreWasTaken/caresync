@@ -15,8 +15,11 @@ const medicationRoutes = require('./routes/medications');
 const prescriptionRoutes = require('./routes/prescriptions');
 const adherenceRoutes = require('./routes/adherence');
 const caregiverRoutes = require('./routes/caregivers');
+const patientRoutes = require('./routes/patients');
 const deviceRoutes = require('./routes/devices');
 const notificationRoutes = require('./routes/notifications');
+
+const reportsRoutes = require('./routes/reports');
 
 // Import middleware
 const {authMiddleware} = require('./middleware/auth');
@@ -111,8 +114,10 @@ app.use('/api/medications', authMiddleware, medicationRoutes);
 app.use('/api/prescriptions', authMiddleware, prescriptionRoutes);
 app.use('/api/adherence', authMiddleware, adherenceRoutes);
 app.use('/api/caregivers', authMiddleware, caregiverRoutes);
+app.use('/api/patients', authMiddleware, patientRoutes);
 app.use('/api/devices', authMiddleware, deviceRoutes);
 app.use('/api/notifications', authMiddleware, notificationRoutes);
+app.use('/api/adherence',authMiddleware, reportsRoutes);
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
@@ -152,17 +157,21 @@ const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {
-    // Test database connection
     await db.authenticate();
     logger.info('Database connection established successfully.');
 
-    // Sync database models
     if (process.env.NODE_ENV === 'development') {
+      // Disable foreign key constraints temporarily
+      await db.query('PRAGMA foreign_keys = OFF;');
+      
       await db.sync({ alter: true });
+      
+      // Re-enable foreign key constraints
+      await db.query('PRAGMA foreign_keys = ON;');
+      
       logger.info('Database models synchronized.');
     }
 
-    // Start server
     server.listen(PORT, () => {
       logger.info(`🚀 CareSync Backend Server running on port ${PORT}`);
       logger.info(`📱 Environment: ${process.env.NODE_ENV || 'development'}`);

@@ -41,8 +41,6 @@ Device.belongsTo(User, { foreignKey: 'userId' });
 User.hasMany(Notification, { foreignKey: 'userId', as: 'notifications' });
 Notification.belongsTo(User, { foreignKey: 'userId' });
 
-// ADD THESE MISSING ASSOCIATIONS:
-// CaregiverPatient belongs to User (for both caregiver and patient)
 CaregiverPatient.belongsTo(User, { 
   foreignKey: 'caregiverId', 
   as: 'caregiver' 

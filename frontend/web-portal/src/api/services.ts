@@ -1,8 +1,9 @@
 import client from './client';
 
 // --- Medications ---
-export const getMedications = async () => {
-  const response = await client.get('/medications');
+export const getMedications = async (patientId?: string) => {
+  const query = patientId ? `?patientId=${patientId}` : '';
+  const response = await client.get(`/medications${query}`);
   return response.data;
 };
 
@@ -26,13 +27,16 @@ export const deleteMedication = async (id: string) => {
   return response.data;
 };
 
-export const getRefillNeeded = async () => {
-  const response = await client.get('/medications/refill-needed');
+export const getRefillNeeded = async (patientId?: string) => {
+  const query = patientId ? `?patientId=${patientId}` : '';
+  const response = await client.get(`/medications/refill-needed${query}`);
   return response.data;
 };
 
-export const getUpcomingDoses = async (hours: number = 24) => {
-  const response = await client.get(`/medications/upcoming-doses?hours=${hours}`);
+export const getUpcomingDoses = async (hours = 24, patientId?: string) => {
+  let query = `?hours=${hours}`;
+  if (patientId) query += `&patientId=${patientId}`;
+  const response = await client.get(`/medications/upcoming-doses${query}`);
   return response.data;
 };
 
@@ -52,10 +56,12 @@ export const logAdherenceRecord = async (data: { medicationId: string; status: s
   return response.data;
 };
 
-export const getAdherenceStats = async (startDate?: string, endDate?: string) => {
+export const getAdherenceStats = async (startDate?: string, endDate?: string, patientId?: string) => {
   const params = new URLSearchParams();
   if (startDate) params.append('startDate', startDate);
   if (endDate) params.append('endDate', endDate);
+  if (patientId) params.append('patientId', patientId);
+  
   const response = await client.get(`/adherence/stats?${params.toString()}`);
   return response.data;
 };
@@ -93,6 +99,11 @@ export const getCaregivers = async () => {
   return response.data;
 };
 
+export const getPatients = async () => {
+  const response = await client.get('/patients');
+  return response.data;
+};
+
 export const inviteCaregiver = async (email: string, relationship: string) => {
   const response = await client.post('/caregivers/invite', { email, relationship });
   return response.data;
@@ -100,6 +111,21 @@ export const inviteCaregiver = async (email: string, relationship: string) => {
 
 export const removeCaregiver = async (id: string) => {
   const response = await client.delete(`/caregivers/${id}`);
+  return response.data;
+};
+
+export const getPendingInvitations = async () => {
+  const response = await client.get('/caregivers/pending');
+  return response.data;
+};
+
+export const acceptInvitation = async (id: string) => {
+  const response = await client.post(`/caregivers/${id}/accept`);
+  return response.data;
+};
+
+export const declineInvitation = async (id: string) => {
+  const response = await client.post(`/caregivers/${id}/decline`);
   return response.data;
 };
 

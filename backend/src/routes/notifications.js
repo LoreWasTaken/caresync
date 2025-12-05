@@ -1,13 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { User, CaregiverPatient } = require('../models');
+const { User, CaregiverPatient, Notification } = require('../models');
 const { authMiddleware } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler')
 const logger = require('../utils/logger');
 const { body, query, param, validationResult } = require('express-validator');
-
-// Notification model (you'll need to create this)
-const Notification = require('../models/Notification');
 
 // @desc    Get all notifications for user
 // @route   GET /api/notifications
@@ -35,11 +32,8 @@ router.get(
     const offset = (page - 1) * limit;
 
     // Build where clause
-    const whereClause = { 
-      [require('sequelize').Op.or]: [
-        { userId: req.user.id },
-        { caregiverId: req.user.id }
-      ]
+    const whereClause = {
+        userId: req.user.id  // <--- SIMPLIFIED: Only check userId
     };
 
     if (read !== undefined) whereClause.isRead = read === 'true';
@@ -50,16 +44,11 @@ router.get(
       limit: parseInt(limit),
       offset: parseInt(offset),
       order: [['createdAt', 'DESC']],
+      // FIX: Remove 'as' aliases if they aren't defined in the model
       include: [
         {
           model: User,
-          as: 'patient',
-          attributes: ['id', 'firstName', 'lastName']
-        },
-        {
-          model: User,
-          as: 'caregiver',
-          attributes: ['id', 'firstName', 'lastName']
+          attributes: ['id', 'firstName', 'lastName'] // No 'as' alias
         }
       ]
     });

@@ -27,6 +27,10 @@ module.exports = (sequelize) => {
       type: DataTypes.STRING,
       allowNull: true
     },
+    isVerified: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false
+    },
     permissions: {
       type: DataTypes.JSON,
       defaultValue: {

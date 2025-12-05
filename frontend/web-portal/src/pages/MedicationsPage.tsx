@@ -1,16 +1,24 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Pill, AlertCircle, Edit, Trash2, RefreshCw } from 'lucide-react';
+import { Plus, Pill, AlertCircle, Edit, Trash2, RefreshCw, X } from 'lucide-react';
 import DashboardLayout from '../components/DashboardLayout';
-import { getMedications, deleteMedication } from '../api/services';
+import { getMedications, deleteMedication, addMedication } from '../api/services';
 
 const MedicationsPage = () => {
   const [meds, setMeds] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showAddModal, setShowAddModal] = useState(false);
 
-  useEffect(() => {
-    loadMeds();
-  }, []);
+  // Form State
+  const [newMed, setNewMed] = useState({
+    name: '',
+    dosage: '',
+    dosageUnit: 'mg',
+    frequency: '1x daily', // simple string for now
+    timesPerDay: 1,
+    totalQuantity: 30,
+    startDate: new Date().toISOString().split('T')[0]
+  });
 
   const loadMeds = async () => {
     try {
@@ -23,13 +31,29 @@ const MedicationsPage = () => {
     }
   };
 
+  useEffect(() => {
+    loadMeds();
+  }, []);
+
+  const handleAddSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await addMedication(newMed);
+      setShowAddModal(false);
+      loadMeds(); // Refresh list
+      setNewMed({ name: '', dosage: '', dosageUnit: 'mg', frequency: '1x daily', timesPerDay: 1, totalQuantity: 30, startDate: new Date().toISOString().split('T')[0] });
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to add medication');
+    }
+  };
+
   const handleDelete = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this medication?')) {
+    if (window.confirm('Are you sure?')) {
       try {
         await deleteMedication(id);
         loadMeds();
       } catch (err) {
-        alert('Failed to delete medication.');
+        alert('Failed to delete');
       }
     }
   };
@@ -38,60 +62,73 @@ const MedicationsPage = () => {
     <DashboardLayout>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">My Medications</h1>
-        <button className="flex items-center gap-2 bg-teal-700 text-white px-4 py-2 rounded-lg hover:bg-teal-800 transition-colors">
+        <button 
+          onClick={() => setShowAddModal(true)}
+          className="flex items-center gap-2 bg-teal-700 text-white px-4 py-2 rounded-lg hover:bg-teal-800 transition-colors"
+        >
           <Plus size={18} />
           <span>Add Medication</span>
         </button>
       </div>
 
-      {loading ? (
-        <div className="text-center py-10 text-gray-500">Loading medications...</div>
-      ) : error ? (
-        <div className="p-4 bg-red-50 text-red-700 rounded-lg flex items-center gap-2">
-          <AlertCircle size={20} /> {error}
-        </div>
-      ) : (
+      {loading ? <div className="text-center py-10">Loading...</div> : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {meds.length === 0 && <p className="text-gray-500 col-span-2">No medications found.</p>}
-          
           {meds.map((med) => (
-            <div key={med.id} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex justify-between items-start mb-3">
-                <div className="flex items-center gap-2">
-                  <Pill className="text-teal-600" size={20} />
-                  <h3 className="font-bold text-gray-900 text-lg">{med.name}</h3>
-                </div>
-                <div className="flex gap-2">
-                  <button className="p-2 text-blue-600 hover:bg-blue-50 rounded transition-colors">
-                    <Edit size={16} />
-                  </button>
-                  <button 
-                    onClick={() => handleDelete(med.id)}
-                    className="p-2 text-red-600 hover:bg-red-50 rounded transition-colors"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
+            <div key={med.id} className="bg-white p-5 rounded-xl border shadow-sm">
+              <div className="flex justify-between">
+                 <h3 className="font-bold">{med.name}</h3>
+                 <button onClick={() => handleDelete(med.id)} className="text-red-500"><Trash2 size={16}/></button>
               </div>
-              
-              <p className="text-sm text-gray-500 mb-3">{med.dosage} {med.dosageUnit}</p>
-              
-              <div className="flex flex-wrap gap-2">
-                <span className="px-2 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-md flex items-center gap-1">
-                  <RefreshCw size={12} />
-                  {med.remainingQuantity || 0} / {med.totalQuantity || 0} left
-                </span>
-                <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-md">
-                  {med.timesPerDay}x daily
-                </span>
-                {med.remainingQuantity <= 10 && (
-                  <span className="px-2 py-1 bg-red-50 text-red-600 text-xs font-medium rounded-md">
-                    Low Stock!
-                  </span>
-                )}
+              <p className="text-sm text-gray-500">{med.dosage} {med.dosageUnit}</p>
+              <div className="mt-2 text-sm">
+                 Stock: {med.remainingQuantity} / {med.totalQuantity}
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Add Medication Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-xl w-full max-w-md">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">Add Medication</h2>
+              <button onClick={() => setShowAddModal(false)}><X size={24} /></button>
+            </div>
+            <form onSubmit={handleAddSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium">Name</label>
+                <input type="text" required className="w-full border rounded p-2" 
+                  value={newMed.name} onChange={e => setNewMed({...newMed, name: e.target.value})} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                   <label className="block text-sm font-medium">Dosage</label>
+                   <input type="number" required className="w-full border rounded p-2" 
+                     value={newMed.dosage} onChange={e => setNewMed({...newMed, dosage: e.target.value})} />
+                </div>
+                <div>
+                   <label className="block text-sm font-medium">Unit</label>
+                   <select className="w-full border rounded p-2" 
+                     value={newMed.dosageUnit} onChange={e => setNewMed({...newMed, dosageUnit: e.target.value})}>
+                     <option>mg</option><option>ml</option><option>pills</option>
+                   </select>
+                </div>
+              </div>
+              <div>
+                 <label className="block text-sm font-medium">Times per Day</label>
+                 <input type="number" min="1" max="4" className="w-full border rounded p-2"
+                   value={newMed.timesPerDay} onChange={e => setNewMed({...newMed, timesPerDay: parseInt(e.target.value)})} />
+              </div>
+              <div>
+                 <label className="block text-sm font-medium">Total Stock</label>
+                 <input type="number" required className="w-full border rounded p-2"
+                   value={newMed.totalQuantity} onChange={e => setNewMed({...newMed, totalQuantity: parseInt(e.target.value)})} />
+              </div>
+              <button type="submit" className="w-full bg-teal-600 text-white py-2 rounded hover:bg-teal-700">Save Medication</button>
+            </form>
+          </div>
         </div>
       )}
     </DashboardLayout>
