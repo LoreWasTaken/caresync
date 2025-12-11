@@ -1,8 +1,16 @@
 import axios from 'axios';
 import useAuthStore from '../store/useAuthStore';
 
+// Determine API base URL:
+// 1) VITE_API_BASE_URL if provided
+// 2) Otherwise current origin + /api (works on LAN/mobile when frontend is hosted)
+const defaultBase =
+  typeof window !== 'undefined'
+    ? `${window.location.origin.replace(/\/$/, '')}/api`
+    : 'http://localhost:5000/api';
+
 const client = axios.create({
-  baseURL: 'http://localhost:5000/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || defaultBase,
   headers: {
     'Content-Type': 'application/json',
   },
