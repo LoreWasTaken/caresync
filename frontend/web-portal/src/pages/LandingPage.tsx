@@ -109,6 +109,16 @@ const LandingPage = () => {
                 Open Dashboard
               </motion.a>
             </div>
+
+            {/* Mobile dashboard button */}
+            <div className="md:hidden">
+              <a
+                href="/dashboard"
+                className="inline-flex items-center px-4 py-2 text-sm font-semibold rounded-full text-white bg-gradient-to-r from-[#285D91] to-[#54B4F0] shadow-lg shadow-[#54B4F0]/30 transition-all"
+              >
+                Open Dashboard
+              </a>
+            </div>
           </div>
         </div>
       </motion.nav>

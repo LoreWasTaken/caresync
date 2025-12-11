@@ -67,7 +67,7 @@ const NFCTransferPage = () => {
         {!supported && (
           <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-lg">
             <WifiOff size={20} />
-            <span>Web NFC is not supported on this device/browser. Try Chrome on Android.</span>
+            <span>Web NFC is not supported on this device/browser. Try Chrome on Android with NFC enabled.</span>
           </div>
         )}
 

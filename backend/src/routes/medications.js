@@ -10,9 +10,13 @@ const validateMedicationCreation = [
   body('name').notEmpty().trim().withMessage('Medication name is required'),
   body('dosage').notEmpty().trim().withMessage('Dosage is required'),
   body('dosageUnit').isIn(['mg', 'ml', 'tablets', 'capsules', 'drops', 'units', 'puffs']).withMessage('Invalid dosage unit'),
-  body('frequency.timesPerDay').isInt({ min: 1, max: 24 }).withMessage('Times per day must be between 1 and 24'),
-  body('frequency.times').isArray().withMessage('Times must be an array'),
+  body('timesPerDay').isInt({ min: 1, max: 24 }).withMessage('Times per day must be between 1 and 24'),
+  body('frequency').optional().isString().withMessage('Frequency must be a string'),
+  // Keep backward compatibility: allow optional nested frequency.timesPerDay/times but don’t require them
+  body('frequency.timesPerDay').optional().isInt({ min: 1, max: 24 }).withMessage('Times per day must be between 1 and 24'),
+  body('frequency.times').optional().isArray().withMessage('Times must be an array'),
   body('startDate').isISO8601().withMessage('Invalid start date'),
+  body('endDate').optional().isISO8601().withMessage('Invalid end date'),
   body('totalQuantity').isInt({ min: 1 }).withMessage('Total quantity must be a positive integer'),
   body('remainingQuantity').optional().isInt({ min: 0 }).withMessage('Remaining quantity must be non-negative')
 ];

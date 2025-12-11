@@ -12,11 +12,13 @@ const LoginPage = () => {
     password: '',
   });
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setFieldErrors({});
     setLoading(true);
 
     try {
@@ -30,7 +32,17 @@ const LoginPage = () => {
         setError(response.message || 'Login failed');
       }
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Invalid email or password');
+      const resp = err.response?.data;
+      if (resp?.errors?.length) {
+        const map: Record<string, string> = {};
+        resp.errors.forEach((e: any) => {
+          if (e.path) map[e.path] = e.msg || resp.message;
+        });
+        setFieldErrors(map);
+        setError(resp.message || 'Login failed. Please fix the highlighted fields.');
+      } else {
+        setError(resp?.message || 'Invalid email or password');
+      }
     } finally {
       setLoading(false);
     }
@@ -59,10 +71,13 @@ const LoginPage = () => {
               type="email"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                fieldErrors.email ? 'border-red-400 focus:ring-red-300' : 'border-gray-300 focus:ring-teal-500'
+              }`}
               placeholder="your@email.com"
               required
             />
+            {fieldErrors.email && <p className="text-xs text-red-600 mt-1">{fieldErrors.email}</p>}
           </div>
 
           <div>
@@ -73,10 +88,13 @@ const LoginPage = () => {
               type="password"
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                fieldErrors.password ? 'border-red-400 focus:ring-red-300' : 'border-gray-300 focus:ring-teal-500'
+              }`}
               placeholder="Enter your password"
               required
             />
+            {fieldErrors.password && <p className="text-xs text-red-600 mt-1">{fieldErrors.password}</p>}
           </div>
 
           <button
