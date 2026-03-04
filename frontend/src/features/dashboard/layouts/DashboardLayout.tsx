@@ -28,11 +28,11 @@ interface NavItem {
 }
 
 const patientNav: NavItem[] = [
-  { label: 'Dashboard',   to: '/app/patient',   icon: <LayoutDashboard size={18} /> },
-  { label: 'Medications', to: '/app/medications', icon: <Pill size={18} /> },
-  { label: 'Schedule',    to: '/app/schedule',    icon: <CalendarDays size={18} />,   disabled: true },
-  { label: 'Devices',     to: '/app/devices',     icon: <Cpu size={18} />,            disabled: true },
-  { label: 'Reports',     to: '/app/reports',     icon: <FileBarChart size={18} />,   disabled: true },
+  { label: 'Dashboard',   to: '/app/patient',      icon: <LayoutDashboard size={18} /> },
+  { label: 'Medications', to: '/app/medications',   icon: <Pill size={18} /> },
+  { label: 'Schedule',    to: '/app/schedule',      icon: <CalendarDays size={18} /> },
+  { label: 'Devices',     to: '/app/devices',       icon: <Cpu size={18} /> },
+  { label: 'Reports',     to: '/app/reports',       icon: <FileBarChart size={18} /> },
 ]
 
 const caregiverNav: NavItem[] = [

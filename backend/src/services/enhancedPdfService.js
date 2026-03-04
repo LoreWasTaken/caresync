@@ -1,115 +1,84 @@
 const PDFDocument = require('pdfkit');
 const QRCode = require('qrcode');
 const crypto = require('crypto');
-const { PDFDocument: PDFLib } = require('pdf-lib');
 const { DocumentMetadata } = require('../models');
-const fs = require('fs');
-const path = require('path');
 
-// Modern professional color scheme
+// ──────────────────────────────────────────────────────────────
+//  Bullet-proof PDF Service — simple top-to-bottom layout.
+//  No manual Y coordinates near page bottom, no pageAdded hooks,
+//  no switchToPage post-processing.  PDFKit handles all page
+//  breaks naturally through its flowing text engine.
+// ──────────────────────────────────────────────────────────────
+
 const COLORS = {
   PRIMARY: '#1565C0',
   PRIMARY_LIGHT: '#E3F2FD',
-  SECONDARY: '#0D47A1',
-  ACCENT: '#42A5F5',
   SUCCESS: '#2E7D32',
   WARNING: '#F57C00',
   DANGER: '#C62828',
-  TEXT_PRIMARY: '#212121',
-  TEXT_SECONDARY: '#757575',
+  TEXT: '#212121',
+  MUTED: '#757575',
   BORDER: '#E0E0E0',
-  BACKGROUND: '#FAFAFA',
-  WHITE: '#FFFFFF'
+  BG: '#FAFAFA',
+  WHITE: '#FFFFFF',
 };
 
-const FONTS = {
-  HEADING: 'Helvetica-Bold',
-  BODY: 'Helvetica',
-  BODY_BOLD: 'Helvetica-Bold',
-  LIGHT: 'Helvetica'
-};
-
-const MARGIN = 50;
+const FONT = { H: 'Helvetica-Bold', B: 'Helvetica' };
+const M = 50; // margin
 
 class EnhancedPdfService {
-  constructor() {
-    this.logoPath = path.join(__dirname, '../assets/logo.png');
-    this.logoExists = fs.existsSync(this.logoPath);
-  }
 
   async generateEnhancedReport(userData, adherenceData, startDate, endDate, options = {}) {
-    const {
-      includeCharts = false,
-      passwordProtect = false,
-      signatureRequired = false
-    } = options;
+    const { includeCharts = false, signatureRequired = false } = options;
 
     return new Promise((resolve, reject) => {
       try {
+        // ── Create document — NO bufferPages, NO autoFirstPage:false ──
         const doc = new PDFDocument({
           size: 'A4',
-          margins: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN },
-          bufferPages: true,
-          autoFirstPage: false
+          margins: { top: M, bottom: M, left: M, right: M },
+          info: {
+            Title: 'CareSync Patient Report',
+            Author: 'CareSync Healthcare Platform',
+            Subject: `Adherence Report ${startDate} — ${endDate}`,
+          },
         });
 
         const documentId = crypto.randomUUID();
-        const generationTimestamp = new Date();
-        const expirationDate = new Date();
-        expirationDate.setFullYear(expirationDate.getFullYear() + 1);
+        const now = new Date();
 
         const buffers = [];
-        doc.on('data', buffers.push.bind(buffers));
-        
+        doc.on('data', (chunk) => buffers.push(chunk));
+
         doc.on('end', async () => {
           const pdfData = Buffer.concat(buffers);
-          let finalPdfData = pdfData;
-          if (passwordProtect) {
-            finalPdfData = await this.addPasswordProtection(pdfData);
-          }
-
           try {
+            const expirationDate = new Date();
+            expirationDate.setFullYear(expirationDate.getFullYear() + 1);
             await DocumentMetadata.create({
               documentId,
               userId: userData.id,
               documentType: 'ADHERENCE_REPORT',
-              documentHash: crypto.createHash('sha256').update(finalPdfData).digest('hex'),
+              documentHash: crypto.createHash('sha256').update(pdfData).digest('hex'),
               fileName: `CareSync_Adherence_Report_${startDate}_to_${endDate}.pdf`,
-              fileSize: finalPdfData.length,
-              generationTimestamp,
+              fileSize: pdfData.length,
+              generationTimestamp: now,
               expirationDate,
-              passwordProtected: !!passwordProtect,
+              passwordProtected: false,
               signatureRequired: !!signatureRequired,
               includeCharts: !!includeCharts,
-              metadata: {
-                userId: userData.id,
-                reportPeriod: { startDate, endDate },
-                adherenceRate: adherenceData.rate
-              }
+              metadata: { userId: userData.id, reportPeriod: { startDate, endDate }, adherenceRate: adherenceData.rate },
             });
-          } catch (error) {
-            console.error('Failed to save metadata:', error);
+          } catch (err) {
+            console.error('Failed to save document metadata:', err);
           }
-
-          resolve(finalPdfData);
+          resolve(pdfData);
         });
 
-        doc.addPage();
-
+        // ── Build the document top-to-bottom ──
         (async () => {
           try {
-            const qrCodeDataUrl = await QRCode.toDataURL(
-              `${process.env.BASE_URL || 'https://caresync.com'}/api/verify?docId=${documentId}`
-            );
-            const qrCodeBuffer = Buffer.from(qrCodeDataUrl.split(',')[1], 'base64');
-            
-            // Draw content
-            this.drawProfessionalDocument(doc, userData, adherenceData, includeCharts, 
-              generationTimestamp, qrCodeBuffer);
-            
-            // Post-processing: Add Footers and Page Numbers to ALL pages
-            this.addGlobalElements(doc, documentId, expirationDate);
-
+            await this._buildDocument(doc, userData, adherenceData, startDate, endDate, includeCharts, documentId, now);
             doc.end();
           } catch (err) {
             reject(err);
@@ -122,461 +91,178 @@ class EnhancedPdfService {
     });
   }
 
-  /**
-   * Helper to handle page breaks centrally
-   * Returns the new Y coordinate (reset to top if new page added)
-   * @param {Object} doc - PDFKit document instance
-   * @param {number} currentY - Current Y position
-   * @param {number} heightNeeded - Height required for the next element
-   * @param {Function} [onPageBreak] - Optional callback to run after page break (e.g., redraw table headers)
-   */
-  checkPageBreak(doc, currentY, heightNeeded, onPageBreak = null) {
-    const bottomLimit = doc.page.height - MARGIN - 80; // Leave 80px space for footer
-    
-    if (currentY + heightNeeded > bottomLimit) {
-      doc.addPage();
-      let newY = MARGIN + 20; // Start slightly below margin on new page
-      
-      if (onPageBreak) {
-        // Run callback (e.g., redraw table headers) and update Y
-        // The callback should return the new Y after drawing headers
-        const resultY = onPageBreak(doc, newY);
-        if (resultY) newY = resultY;
-      }
-      
-      return newY;
-    }
-    return currentY;
-  }
+  // ─────────────────────────────────────────────────────────
+  //  Main document builder — purely sequential, top-to-bottom
+  // ─────────────────────────────────────────────────────────
+  async _buildDocument(doc, userData, adherenceData, startDate, endDate, includeCharts, documentId, timestamp) {
+    const pageW = doc.page.width;
+    const contentW = pageW - M * 2;
 
-  drawProfessionalDocument(doc, userData, adherenceData, includeCharts, 
-    generationTimestamp, qrCodeBuffer) {
-    
-    let y = MARGIN;
+    // ── Accent bar ──
+    doc.rect(0, 0, pageW, 4).fill(COLORS.PRIMARY);
 
-    // === HEADER ===
-    y = this.drawModernHeader(doc, y, generationTimestamp, qrCodeBuffer);
-    y += 40;
+    // ── QR Code (top-right) ──
+    try {
+      const qrUrl = `${process.env.BASE_URL || 'https://caresync.com'}/api/verify?docId=${documentId}`;
+      const qrDataUrl = await QRCode.toDataURL(qrUrl, { width: 80, margin: 0 });
+      const qrBuf = Buffer.from(qrDataUrl.split(',')[1], 'base64');
+      doc.image(qrBuf, pageW - M - 55, M, { width: 55 });
+    } catch { /* QR is optional — continue without it */ }
 
-    // === TITLE ===
-    y = this.drawDocumentTitle(doc, y);
-    y += 30;
+    // ── Header ──
+    doc.font(FONT.H).fontSize(22).fillColor(COLORS.PRIMARY)
+      .text('CareSync', M, M, { lineBreak: false });
+    doc.font(FONT.B).fontSize(9).fillColor(COLORS.MUTED)
+      .text('Healthcare Adherence Platform', M, M + 26, { lineBreak: false });
+    doc.text(`Generated: ${timestamp.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}`, M, M + 38, { lineBreak: false });
 
-    // === PATIENT CARD ===
-    y = this.checkPageBreak(doc, y, 80);
-    y = this.drawPatientInfoCard(doc, y, userData);
-    y += 30;
+    doc.moveTo(M, M + 55).lineTo(pageW - M, M + 55).strokeColor(COLORS.BORDER).lineWidth(1).stroke();
 
-    // === METRICS ===
-    y = this.checkPageBreak(doc, y, 100);
-    y = this.drawMetricsDashboard(doc, y, adherenceData);
-    y += 30;
+    // ── Title ──
+    doc.font(FONT.H).fontSize(18).fillColor(COLORS.TEXT)
+      .text('Patient Medication Adherence Report', M, M + 70, { lineBreak: false });
+    doc.font(FONT.B).fontSize(10).fillColor(COLORS.MUTED)
+      .text('Comprehensive Analysis & Clinical Summary', M, M + 92, { lineBreak: false });
 
-    // === VISUALIZATION ===
-    if (includeCharts) {
-      y = this.checkPageBreak(doc, y, 60);
-      y = this.drawVisualization(doc, y, adherenceData);
-      y += 30;
-    }
+    // Move the flowing cursor below all the absolute-positioned header content
+    doc.y = M + 115;
+    doc.x = M;
 
-    // === STATS TABLE ===
-    y = this.checkPageBreak(doc, y, 180);
-    y = this.drawStatsSection(doc, y, adherenceData);
-    y += 30;
+    // ── Patient Info ──
+    this._sectionHeading(doc, 'Patient Information');
+    doc.font(FONT.B).fontSize(10).fillColor(COLORS.TEXT);
+    doc.text(`Name:   ${userData.firstName || ''} ${userData.lastName || ''}`, { continued: false });
+    doc.text(`Email:  ${userData.email || 'N/A'}`, { continued: false });
+    doc.moveDown(0.8);
 
-    // === MEDICATION HISTORY ===
-    // This handles its own internal page breaks row-by-row
-    y = this.drawMedicationSection(doc, y, adherenceData.history);
-  }
-
-  drawModernHeader(doc, y, timestamp, qrCodeBuffer) {
-    doc.fillColor(COLORS.PRIMARY).rect(0, 0, doc.page.width, 3).fill();
-
-    doc.fillColor(COLORS.PRIMARY)
-       .font(FONTS.HEADING)
-       .fontSize(24)
-       .text('CareSync', MARGIN, y);
-    
-    doc.fillColor(COLORS.TEXT_SECONDARY)
-       .font(FONTS.LIGHT)
-       .fontSize(9)
-       .text('Healthcare Adherence Platform', MARGIN, y + 28);
-    
-    doc.text('www.caresync.com', MARGIN, y + 40);
-
-    doc.image(qrCodeBuffer, doc.page.width - 110, y, { width: 60 });
-    
-    doc.fillColor(COLORS.TEXT_SECONDARY)
-       .fontSize(8)
-       .text('Scan to verify', doc.page.width - 110, y + 65, { width: 60, align: 'center' });
-
-    doc.fillColor(COLORS.TEXT_SECONDARY)
-       .fontSize(9)
-       .text(`Generated: ${timestamp.toLocaleDateString('en-US', { 
-         year: 'numeric', month: 'short', day: 'numeric' 
-       })}`, doc.page.width - 200, y + 25, { width: 80, align: 'right' });
-
-    doc.strokeColor(COLORS.BORDER)
-       .lineWidth(1)
-       .moveTo(MARGIN, y + 85)
-       .lineTo(doc.page.width - MARGIN, y + 85)
-       .stroke();
-
-    return y + 95;
-  }
-
-  drawDocumentTitle(doc, y) {
-    doc.fillColor(COLORS.TEXT_PRIMARY)
-       .font(FONTS.HEADING)
-       .fontSize(20)
-       .text('Patient Medication Adherence Report', MARGIN, y);
-    
-    doc.fillColor(COLORS.TEXT_SECONDARY)
-       .font(FONTS.LIGHT)
-       .fontSize(10)
-       .text('Comprehensive Analysis & Clinical Summary', MARGIN, y + 25);
-
-    return y + 45;
-  }
-
-  drawPatientInfoCard(doc, y, userData) {
-    const cardHeight = 70;
-    doc.fillColor(COLORS.PRIMARY_LIGHT)
-       .rect(MARGIN, y, doc.page.width - (MARGIN * 2), cardHeight)
-       .fill();
-
-    doc.fillColor(COLORS.PRIMARY)
-       .rect(MARGIN, y, 4, cardHeight)
-       .fill();
-
-    doc.fillColor(COLORS.PRIMARY)
-       .font(FONTS.HEADING)
-       .fontSize(12)
-       .text('PATIENT INFORMATION', MARGIN + 15, y + 15);
-
-    const detailsY = y + 35;
-    doc.fillColor(COLORS.TEXT_PRIMARY)
-       .font(FONTS.BODY_BOLD)
-       .fontSize(10)
-       .text('Name:', MARGIN + 15, detailsY);
-    
-    doc.font(FONTS.BODY)
-       .text(`${userData.firstName} ${userData.lastName}`, MARGIN + 70, detailsY);
-
-    doc.font(FONTS.BODY_BOLD)
-       .text('Email:', MARGIN + 15, detailsY + 15);
-    
-    doc.font(FONTS.BODY)
-       .text(userData.email || 'N/A', MARGIN + 70, detailsY + 15);
-
-    return y + cardHeight;
-  }
-
-  drawMetricsDashboard(doc, y, adherenceData) {
-    doc.fillColor(COLORS.PRIMARY)
-       .font(FONTS.HEADING)
-       .fontSize(14)
-       .text('Clinical Summary', MARGIN, y);
-
-    y += 25;
-
+    // ── Key Metrics ──
+    this._sectionHeading(doc, 'Clinical Summary');
+    const taken = (adherenceData.total || 0) - (adherenceData.missed || 0);
     const metrics = [
-      { label: 'Adherence Rate', value: adherenceData.rate, color: this.getAdherenceColor(adherenceData.rate) },
-      { label: 'Total Doses', value: adherenceData.total, color: COLORS.PRIMARY },
-      { label: 'Doses Taken', value: adherenceData.total - adherenceData.missed, color: COLORS.SUCCESS },
-      { label: 'Doses Missed', value: adherenceData.missed, color: COLORS.DANGER }
+      ['Adherence Rate', String(adherenceData.rate ?? 'N/A')],
+      ['Total Scheduled Doses', String(adherenceData.total ?? 0)],
+      ['Doses Taken', String(taken)],
+      ['Doses Missed', String(adherenceData.missed ?? 0)],
+      ['Report Period', `${startDate}  to  ${endDate}`],
     ];
+    this._drawTable(doc, contentW, [], metrics);
+    doc.moveDown(0.5);
 
-    const cardWidth = 120;
-    const cardHeight = 75;
-    const spacing = 15;
-    const startX = MARGIN;
+    // ── Adherence Bar ──
+    if (includeCharts) {
+      this._sectionHeading(doc, 'Adherence Visualization');
+      const rate = parseInt(adherenceData.rate) || 0;
+      const barX = doc.x;
+      const barY = doc.y;
+      const barW = contentW - 60;
+      const barH = 20;
+      // Background
+      doc.rect(barX, barY, barW, barH).fill(COLORS.BG);
+      doc.rect(barX, barY, barW, barH).strokeColor(COLORS.BORDER).lineWidth(0.5).stroke();
+      // Fill
+      const fillW = Math.max(0, (rate / 100) * barW);
+      if (fillW > 0) {
+        doc.rect(barX, barY, fillW, barH).fill(this._rateColor(rate));
+      }
+      // Label
+      doc.font(FONT.H).fontSize(10).fillColor(COLORS.TEXT)
+        .text(`${rate}%`, barX + barW + 8, barY + 4, { lineBreak: false });
 
-    metrics.forEach((metric, i) => {
-      const x = startX + (i % 4) * (cardWidth + spacing);
-      const cardY = y + (Math.floor(i / 4) * (cardHeight + spacing));
-
-      if (cardY + cardHeight > doc.page.height - MARGIN) return;
-
-      doc.fillColor(COLORS.WHITE)
-         .rect(x, cardY, cardWidth, cardHeight)
-         .fill();
-
-      doc.strokeColor(COLORS.BORDER)
-         .lineWidth(1)
-         .rect(x, cardY, cardWidth, cardHeight)
-         .stroke();
-
-      doc.fillColor(metric.color)
-         .rect(x, cardY, cardWidth, 3)
-         .fill();
-
-      doc.fillColor(metric.color)
-         .font(FONTS.HEADING)
-         .fontSize(22)
-         .text(String(metric.value), x, cardY + 20, { 
-           width: cardWidth, 
-           align: 'center' 
-         });
-
-      doc.fillColor(COLORS.TEXT_SECONDARY)
-         .font(FONTS.BODY)
-         .fontSize(9)
-         .text(metric.label, x, cardY + 50, { 
-           width: cardWidth, 
-           align: 'center' 
-         });
-    });
-
-    return y + cardHeight + 10;
-  }
-
-  drawVisualization(doc, y, adherenceData) {
-    doc.fillColor(COLORS.PRIMARY)
-       .font(FONTS.HEADING)
-       .fontSize(14)
-       .text('Adherence Visualization', MARGIN, y);
-
-    y += 25;
-
-    const rate = parseInt(adherenceData.rate) || 0;
-    const color = this.getAdherenceColor(rate);
-
-    const barWidth = doc.page.width - (MARGIN * 2) - 50;
-    const barHeight = 24;
-    const barX = MARGIN;
-
-    doc.fillColor(COLORS.BACKGROUND)
-       .rect(barX, y, barWidth, barHeight)
-       .fill();
-
-    doc.strokeColor(COLORS.BORDER)
-       .lineWidth(1)
-       .rect(barX, y, barWidth, barHeight)
-       .stroke();
-
-    const fillWidth = ((rate / 100) * barWidth) || 0;
-    if (fillWidth > 0) {
-      doc.fillColor(color)
-         .rect(barX, y, fillWidth, barHeight)
-         .fill();
+      doc.y = barY + barH + 12;
+      doc.x = M;
+      doc.moveDown(0.3);
     }
 
-    doc.fillColor(COLORS.WHITE)
-       .font(FONTS.BODY_BOLD)
-       .fontSize(11)
-       .text(`${rate}%`, barX + fillWidth - 35, y + 7);
+    // ── Medication History Table ──
+    const history = Array.isArray(adherenceData.history) ? adherenceData.history : [];
+    if (history.length > 0) {
+      this._sectionHeading(doc, 'Medication History');
 
-    doc.fillColor(COLORS.TEXT_SECONDARY)
-       .font(FONTS.BODY)
-       .fontSize(9)
-       .text('Overall Adherence Performance', doc.page.width - 150, y + 7);
-
-    return y + barHeight + 20;
-  }
-
-  drawStatsSection(doc, y, adherenceData) {
-    doc.fillColor(COLORS.PRIMARY)
-       .font(FONTS.HEADING)
-       .fontSize(14)
-       .text('Detailed Statistics', MARGIN, y);
-
-    y += 25;
-
-    const stats = [
-      ['Report Period', `${adherenceData.startDate} to ${adherenceData.endDate}`],
-      ['Adherence Rate', adherenceData.rate],
-      ['Total Scheduled Doses', adherenceData.total],
-      ['Successfully Taken', adherenceData.total - adherenceData.missed],
-      ['Missed Doses', adherenceData.missed]
-    ];
-
-    const rowHeight = 32;
-
-    stats.forEach((stat, i) => {
-      const rowY = y + (i * rowHeight);
-
-      if (i % 2 === 0) {
-        doc.fillColor(COLORS.BACKGROUND)
-           .rect(MARGIN, rowY, doc.page.width - (MARGIN * 2), rowHeight)
-           .fill();
-      }
-
-      doc.fillColor(COLORS.TEXT_SECONDARY)
-         .font(FONTS.BODY)
-         .fontSize(10)
-         .text(stat[0], MARGIN + 10, rowY + 10);
-
-      doc.fillColor(COLORS.TEXT_PRIMARY)
-         .font(FONTS.BODY_BOLD)
-         .fontSize(10)
-         .text(String(stat[1]), MARGIN + 220, rowY + 10);
-
-      doc.strokeColor(COLORS.BORDER)
-         .lineWidth(0.5)
-         .moveTo(MARGIN, rowY + rowHeight)
-         .lineTo(doc.page.width - MARGIN, rowY + rowHeight)
-         .stroke();
-    });
-
-    return y + (stats.length * rowHeight) + 10;
-  }
-
-  drawMedicationSection(doc, y, history) {
-    const rowHeight = 28;
-    
-    // Check space for Title + Header + at least 1 row
-    y = this.checkPageBreak(doc, y, 60 + rowHeight);
-
-    doc.fillColor(COLORS.PRIMARY)
-       .font(FONTS.HEADING)
-       .fontSize(14)
-       .text('Medication History', MARGIN, y);
-
-    y += 25;
-
-    // Helper to draw headers (called initially and on new pages)
-    const drawHeaders = (d, currentY) => {
       const headers = ['Date & Time', 'Medication', 'Status', 'Notes'];
-      const colWidths = [110, 140, 70, 135];
-      const startX = MARGIN;
-
-      d.fillColor(COLORS.PRIMARY)
-         .rect(startX, currentY, d.page.width - (MARGIN * 2), rowHeight)
-         .fill();
-
-      let x = startX + 8;
-      headers.forEach((header, i) => {
-        d.fillColor(COLORS.WHITE)
-           .font(FONTS.BODY_BOLD)
-           .fontSize(9)
-           .text(header, x, currentY + 9);
-        x += colWidths[i];
+      const rows = history.map((r) => {
+        const dateStr = r.takenAt
+          ? new Date(r.takenAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : 'N/A';
+        return [
+          dateStr,
+          r.Medication?.name || r.medicationName || 'N/A',
+          (r.status || '').toUpperCase(),
+          r.notes || '-',
+        ];
       });
-      
-      return currentY + rowHeight; // Return next Y position
-    };
 
-    // Draw initial headers
-    y = drawHeaders(doc, y);
+      this._drawTable(doc, contentW, headers, rows);
+      doc.moveDown(0.8);
+    }
 
-    // Draw rows
-    const colWidths = [110, 140, 70, 135];
-    const startX = MARGIN;
+    // ── Footer (simple, at end — NOT on every page) ──
+    doc.moveDown(1);
+    doc.moveTo(M, doc.y).lineTo(pageW - M, doc.y).strokeColor(COLORS.BORDER).lineWidth(0.5).stroke();
+    doc.moveDown(0.4);
+    doc.font(FONT.B).fontSize(7).fillColor(COLORS.MUTED);
+    doc.text('CONFIDENTIAL MEDICAL DOCUMENT');
+    doc.text(`Document ID: ${documentId}`);
+    doc.text('This document contains protected health information. Unauthorized access or distribution is prohibited.');
+    doc.text('support@caresync.com  |  +1 (555) 123-4567');
+  }
 
-    history.forEach((record, i) => {
-      // Check page break for EACH row, passing drawHeaders as callback
-      y = this.checkPageBreak(doc, y, rowHeight, drawHeaders);
+  // ─────────────────────────────────────────────────────
+  //  Helpers
+  // ─────────────────────────────────────────────────────
 
-      if (i % 2 === 1) {
-        doc.fillColor(COLORS.BACKGROUND)
-           .rect(startX, y, doc.page.width - (MARGIN * 2), rowHeight)
-           .fill();
+  /** Draw a blue section heading with a small left accent bar. */
+  _sectionHeading(doc, title) {
+    const y = doc.y;
+    doc.rect(M, y, 3, 16).fill(COLORS.PRIMARY);
+    doc.font(FONT.H).fontSize(13).fillColor(COLORS.PRIMARY)
+      .text(title, M + 10, y + 1, { lineBreak: false });
+    doc.y = y + 22;
+    doc.x = M;
+  }
+
+  /**
+   * Simple flowing table using doc.text().
+   * PDFKit handles page breaks automatically.
+   */
+  _drawTable(doc, contentW, headers, rows) {
+    const cols = headers.length || (rows[0] ? rows[0].length : 1);
+    const colW = Math.floor(contentW / cols);
+
+    // Header row
+    if (headers.length > 0) {
+      const hY = doc.y;
+      doc.rect(M, hY, contentW, 20).fill(COLORS.PRIMARY);
+      headers.forEach((h, i) => {
+        doc.font(FONT.H).fontSize(8).fillColor(COLORS.WHITE)
+          .text(h, M + i * colW + 6, hY + 6, { width: colW - 12, lineBreak: false });
+      });
+      doc.y = hY + 20;
+    }
+
+    // Data rows
+    rows.forEach((row, ri) => {
+      const rowY = doc.y;
+
+      // Alternate background
+      if (ri % 2 === 0) {
+        doc.rect(M, rowY, contentW, 18).fill(COLORS.BG);
       }
 
-      const date = new Date(record.takenAt).toLocaleString('en-US', { 
-        month: 'short', 
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
+      row.forEach((cell, ci) => {
+        const color = (headers.length > 0 && headers[ci] === 'Status')
+          ? (String(cell).includes('TAKEN') ? COLORS.SUCCESS : String(cell).includes('MISS') ? COLORS.DANGER : COLORS.TEXT)
+          : COLORS.TEXT;
+        doc.font(FONT.B).fontSize(8).fillColor(color)
+          .text(String(cell ?? ''), M + ci * colW + 6, rowY + 5, { width: colW - 12, lineBreak: false });
       });
 
-      let x = startX + 8;
-
-      doc.fillColor(COLORS.TEXT_PRIMARY)
-         .font(FONTS.BODY)
-         .fontSize(8)
-         .text(date, x, y + 9, { width: colWidths[0] - 8 });
-      x += colWidths[0];
-
-      doc.text(record.Medication?.name || 'N/A', x, y + 9, { width: colWidths[1] - 8 });
-      x += colWidths[1];
-
-      const statusColor = record.status === 'taken' ? COLORS.SUCCESS : COLORS.DANGER;
-      doc.fillColor(statusColor)
-         .font(FONTS.BODY_BOLD)
-         .fontSize(8)
-         .text((record.status || '').toUpperCase(), x, y + 9);
-      x += colWidths[2];
-
-      doc.fillColor(COLORS.TEXT_SECONDARY)
-         .font(FONTS.BODY)
-         .fontSize(8)
-         .text(record.notes || '-', x, y + 9, { width: colWidths[3] - 8 });
-
-      doc.strokeColor(COLORS.BORDER)
-         .lineWidth(0.5)
-         .moveTo(startX, y + rowHeight)
-         .lineTo(doc.page.width - MARGIN, y + rowHeight)
-         .stroke();
-
-      y += rowHeight;
+      doc.y = rowY + 18;
     });
-
-    return y + 10;
   }
 
-  addGlobalElements(doc, documentId, expirationDate) {
-    const range = doc.bufferedPageRange();
-    const footerY = doc.page.height - 80;
-
-    for (let i = range.start; i < range.start + range.count; i++) {
-      doc.switchToPage(i);
-      
-      // Footer Lines
-      doc.strokeColor(COLORS.BORDER)
-         .lineWidth(1)
-         .moveTo(MARGIN, footerY)
-         .lineTo(doc.page.width - MARGIN, footerY)
-         .stroke();
-
-      // Footer Text
-      doc.fillColor(COLORS.TEXT_SECONDARY)
-         .font(FONTS.BODY)
-         .fontSize(8)
-         .text('CONFIDENTIAL MEDICAL DOCUMENT', MARGIN, footerY + 15);
-
-      doc.text(`Document ID: ${documentId}`, MARGIN, footerY + 28);
-      doc.text(`Valid Until: ${expirationDate.toLocaleDateString()}`, MARGIN, footerY + 40);
-
-      // Center Disclaimer
-      doc.text(
-        'This document contains protected health information. Unauthorized access or distribution is prohibited.',
-        MARGIN,
-        footerY + 52,
-        { width: doc.page.width - (MARGIN * 2), align: 'center' }
-      );
-
-      // Contact
-      doc.fillColor(COLORS.PRIMARY)
-         .text('support@caresync.com | +1 (555) 123-4567', 0, footerY + 28, {
-           width: doc.page.width - MARGIN,
-           align: 'right'
-         });
-
-      // Page Numbers
-      doc.fillColor(COLORS.TEXT_SECONDARY)
-         .font(FONTS.BODY)
-         .fontSize(8)
-         .text(`Page ${i + 1} of ${range.count}`, 0, doc.page.height - 30, {
-           width: doc.page.width - MARGIN,
-           align: 'right'
-         });
-    }
-  }
-
-  async addPasswordProtection(pdfBuffer) {
-    const pdfDoc = await PDFLib.load(pdfBuffer);
-    pdfDoc.setOwnerPassword(process.env.PDF_OWNER_PASSWORD || 'admin');
-    pdfDoc.setUserPassword(process.env.PDF_USER_PASSWORD || 'patient');
-    return Buffer.from(await pdfDoc.save());
-  }
-
-  getAdherenceColor(rate) {
-    const n = parseInt(rate);
-    if (isNaN(n)) return COLORS.DANGER;
-    if (n >= 90) return COLORS.SUCCESS;
-    if (n >= 70) return COLORS.WARNING;
+  _rateColor(rate) {
+    if (rate >= 90) return COLORS.SUCCESS;
+    if (rate >= 70) return COLORS.WARNING;
     return COLORS.DANGER;
   }
 }

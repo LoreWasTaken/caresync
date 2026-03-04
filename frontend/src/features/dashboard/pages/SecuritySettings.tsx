@@ -1,6 +1,6 @@
 // src/features/dashboard/pages/SecuritySettings.tsx
-// Expanded Settings page — Profile, Appearance, Security, Danger Zone.
-import React, { useState } from 'react'
+// Expanded Settings page — Profile, Appearance, Security, 2FA, Danger Zone.
+import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Key,
@@ -14,6 +14,10 @@ import {
   Moon,
   Monitor,
   Palette,
+  ShieldCheck,
+  ShieldOff,
+  Copy,
+  Check,
 } from 'lucide-react'
 import { client } from '../../../shared/api/client'
 import { useAuthStore } from '../../../shared/store/authStore'
@@ -151,6 +155,90 @@ export const SecuritySettings = () => {
       setRoleError(err.response?.data?.message || 'Failed to change role')
       setRoleLoading(false)
     }
+  }
+
+  /* ---- 2FA state ---- */
+  type TwoFAStep = 'loading' | 'disabled' | 'setup' | 'verify' | 'enabled'
+  const [tfaStep, setTfaStep] = useState<TwoFAStep>('loading')
+  const [tfaQr, setTfaQr] = useState<string | null>(null)
+  const [tfaSecret, setTfaSecret] = useState<string | null>(null)
+  const [tfaCode, setTfaCode] = useState('')
+  const [tfaRecovery, setTfaRecovery] = useState<string[] | null>(null)
+  const [tfaRemaining, setTfaRemaining] = useState<number | null>(null)
+  const [tfaLoading, setTfaLoading] = useState(false)
+  const [tfaError, setTfaError] = useState<string | null>(null)
+  const [tfaDisablePass, setTfaDisablePass] = useState('')
+  const [tfaCopied, setTfaCopied] = useState(false)
+
+  // Fetch 2FA status on mount
+  useEffect(() => {
+    client
+      .get('/auth/2fa/status')
+      .then((res) => {
+        const d = res.data?.data
+        if (d?.isTwoFactorEnabled) {
+          setTfaStep('enabled')
+          setTfaRemaining(d.remainingRecoveryCodes ?? null)
+        } else {
+          setTfaStep('disabled')
+        }
+      })
+      .catch(() => setTfaStep('disabled'))
+  }, [])
+
+  const handleTfaSetup = async () => {
+    setTfaLoading(true)
+    setTfaError(null)
+    try {
+      const res = await client.post('/auth/2fa/setup')
+      const d = res.data?.data
+      setTfaQr(d?.qrCode ?? null)
+      setTfaSecret(d?.secret ?? null)
+      setTfaStep('setup')
+    } catch (err: any) {
+      setTfaError(err.response?.data?.message ?? 'Failed to start 2FA setup')
+    } finally {
+      setTfaLoading(false)
+    }
+  }
+
+  const handleTfaVerify = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setTfaLoading(true)
+    setTfaError(null)
+    try {
+      const res = await client.post('/auth/2fa/confirm-setup', { token: tfaCode })
+      setTfaRecovery(res.data?.data?.recoveryCodes ?? [])
+      setTfaStep('verify')
+    } catch (err: any) {
+      setTfaError(err.response?.data?.message ?? 'Invalid code. Please try again.')
+    } finally {
+      setTfaLoading(false)
+    }
+  }
+
+  const handleTfaDisable = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setTfaLoading(true)
+    setTfaError(null)
+    try {
+      await client.post('/auth/2fa/disable', { password: tfaDisablePass })
+      setTfaStep('disabled')
+      setTfaDisablePass('')
+      setTfaRemaining(null)
+      setTfaRecovery(null)
+    } catch (err: any) {
+      setTfaError(err.response?.data?.message ?? 'Failed to disable 2FA')
+    } finally {
+      setTfaLoading(false)
+    }
+  }
+
+  const copyRecoveryCodes = () => {
+    if (!tfaRecovery) return
+    navigator.clipboard.writeText(tfaRecovery.join('\n'))
+    setTfaCopied(true)
+    setTimeout(() => setTfaCopied(false), 2000)
   }
 
   /* ---- Theme options ---- */
@@ -363,7 +451,200 @@ export const SecuritySettings = () => {
       </div>
 
       {/* ============================================================ */}
-      {/*  4. Danger Zone — Change Role                                 */}
+      {/*  4. Two-Factor Authentication                                 */}
+      {/* ============================================================ */}
+      <div className="bg-bg-card border border-border-subtle rounded-2xl shadow-sm overflow-hidden">
+        <div className="p-5 sm:p-6 border-b border-border-subtle bg-bg-page/50">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-500">
+              <ShieldCheck size={20} />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-bold text-text-main">Two-Factor Authentication</h2>
+              <p className="text-xs sm:text-sm text-text-muted">Add an extra layer of security with TOTP.</p>
+            </div>
+            {tfaStep === 'enabled' && (
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                Active
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="p-5 sm:p-6 space-y-4">
+          {/* Error */}
+          {tfaError && (
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-500">
+              {tfaError}
+            </div>
+          )}
+
+          {/* --- Loading --- */}
+          {tfaStep === 'loading' && (
+            <div className="flex justify-center py-6">
+              <Loader2 className="animate-spin text-text-muted" size={22} />
+            </div>
+          )}
+
+          {/* --- Disabled: show Enable button --- */}
+          {tfaStep === 'disabled' && (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <ShieldOff size={20} className="text-text-muted opacity-50" />
+                <p className="text-sm text-text-muted">2FA is currently <b className="text-text-main">disabled</b>.</p>
+              </div>
+              <button
+                onClick={handleTfaSetup}
+                disabled={tfaLoading}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold rounded-lg transition-colors disabled:opacity-50"
+              >
+                {tfaLoading && <Loader2 size={14} className="animate-spin" />}
+                Enable 2FA
+              </button>
+            </div>
+          )}
+
+          {/* --- Setup: show QR + code input --- */}
+          {tfaStep === 'setup' && (
+            <>
+              <p className="text-sm text-text-muted">
+                Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.) then enter the 6-digit code below.
+              </p>
+
+              <div className="flex flex-col items-center gap-4 py-2">
+                {tfaQr && (
+                  <img src={tfaQr} alt="2FA QR Code" className="w-48 h-48 rounded-xl border border-border-subtle" />
+                )}
+                {tfaSecret && (
+                  <div className="text-center">
+                    <p className="text-[11px] text-text-muted mb-1">Or enter this secret manually:</p>
+                    <code className="text-xs bg-bg-page px-3 py-1.5 rounded-md border border-border-subtle select-all font-mono">
+                      {tfaSecret}
+                    </code>
+                  </div>
+                )}
+              </div>
+
+              <form onSubmit={handleTfaVerify} className="flex items-end gap-3">
+                <div className="flex-1">
+                  <label className={labelCls}>6-digit code</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    pattern="\d{6}"
+                    required
+                    placeholder="000000"
+                    value={tfaCode}
+                    onChange={(e) => setTfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    className={inputCls + ' tracking-[0.3em] text-center font-mono text-lg'}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={tfaLoading || tfaCode.length !== 6}
+                  className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2 shrink-0"
+                >
+                  {tfaLoading && <Loader2 size={14} className="animate-spin" />}
+                  Verify
+                </button>
+              </form>
+            </>
+          )}
+
+          {/* --- Verify success: show recovery codes --- */}
+          {tfaStep === 'verify' && tfaRecovery && (
+            <>
+              <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-sm text-green-500 font-medium">
+                2FA has been enabled successfully!
+              </div>
+
+              <div className="bg-bg-page border border-border-subtle rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-text-main">Recovery Codes</p>
+                  <button
+                    onClick={copyRecoveryCodes}
+                    className="inline-flex items-center gap-1.5 text-xs text-brand-primary hover:underline"
+                  >
+                    {tfaCopied ? <Check size={12} /> : <Copy size={12} />}
+                    {tfaCopied ? 'Copied!' : 'Copy all'}
+                  </button>
+                </div>
+                <p className="text-xs text-text-muted">
+                  Save these codes in a safe place. Each code can only be used once if you lose access to your authenticator app.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {tfaRecovery.map((code) => (
+                    <code
+                      key={code}
+                      className="text-xs font-mono bg-bg-card px-3 py-1.5 rounded border border-border-subtle text-center select-all"
+                    >
+                      {code}
+                    </code>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={() => {
+                    setTfaStep('enabled')
+                    setTfaRemaining(tfaRecovery.length)
+                    setTfaRecovery(null)
+                    setTfaCode('')
+                  }}
+                  className="px-5 py-2.5 bg-brand-primary hover:bg-brand-light text-white text-sm font-bold rounded-lg transition-colors"
+                >
+                  I've saved my codes
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* --- Enabled: show status + disable --- */}
+          {tfaStep === 'enabled' && (
+            <>
+              <div className="flex items-center gap-3">
+                <ShieldCheck size={20} className="text-emerald-500" />
+                <div>
+                  <p className="text-sm text-text-main font-medium">2FA is active on your account.</p>
+                  {tfaRemaining != null && (
+                    <p className="text-xs text-text-muted">{tfaRemaining} recovery code{tfaRemaining !== 1 && 's'} remaining.</p>
+                  )}
+                </div>
+              </div>
+
+              <form onSubmit={handleTfaDisable} className="pt-2 space-y-3 border-t border-border-subtle mt-3">
+                <p className="text-xs text-text-muted pt-2">Enter your password to disable 2FA.</p>
+                <div className="flex items-end gap-3">
+                  <div className="flex-1">
+                    <input
+                      type="password"
+                      required
+                      placeholder="Current password"
+                      value={tfaDisablePass}
+                      onChange={(e) => setTfaDisablePass(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={tfaLoading || !tfaDisablePass}
+                    className="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-bold rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2 shrink-0"
+                  >
+                    {tfaLoading && <Loader2 size={14} className="animate-spin" />}
+                    Disable 2FA
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ============================================================ */}
+      {/*  5. Danger Zone — Change Role                                 */}
       {/* ============================================================ */}
       <div className="bg-bg-card border border-red-500/30 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-5 sm:p-6 border-b border-red-500/20 bg-red-500/5">

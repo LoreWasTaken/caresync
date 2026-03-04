@@ -32,6 +32,11 @@ import { SecuritySettings } from './features/dashboard/pages/SecuritySettings'
 import { MyMedicationsPage } from './features/medications/pages/MyMedicationsPage'
 import { AddMedicationPage } from './features/medications/pages/AddMedicationPage'
 import { EditMedicationPage } from './features/medications/pages/EditMedicationPage'
+import { SchedulePage } from './features/medications/pages/SchedulePage'
+
+// Device & Report Pages
+import { DevicesPage } from './features/devices/pages/DevicesPage'
+import { ReportsPage } from './features/reports/pages/ReportsPage'
 
 // Helper: redirects /app to the user's role-appropriate dashboard
 import { useAuthStore } from './shared/store/authStore'
@@ -120,6 +125,36 @@ export function App() {
             element={
               <RoleBasedRoute allowedRoles={['patient']}>
                 <EditMedicationPage />
+              </RoleBasedRoute>
+            }
+          />
+
+          {/* Schedule — patient-only */}
+          <Route
+            path="schedule"
+            element={
+              <RoleBasedRoute allowedRoles={['patient']}>
+                <SchedulePage />
+              </RoleBasedRoute>
+            }
+          />
+
+          {/* Devices — patient-only */}
+          <Route
+            path="devices"
+            element={
+              <RoleBasedRoute allowedRoles={['patient']}>
+                <DevicesPage />
+              </RoleBasedRoute>
+            }
+          />
+
+          {/* Reports — patient-only */}
+          <Route
+            path="reports"
+            element={
+              <RoleBasedRoute allowedRoles={['patient']}>
+                <ReportsPage />
               </RoleBasedRoute>
             }
           />

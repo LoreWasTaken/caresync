@@ -154,3 +154,101 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
+
+/* ================================
+   FullCalendar Theme Override
+   Uses FullCalendar's own CSS variables so both
+   light and dark modes work automatically.
+   ================================ */
+
+/* FullCalendar CSS custom properties — linked to our theme tokens */
+.fc {
+  --fc-page-bg-color: var(--bg-card);
+  --fc-neutral-bg-color: var(--bg-hover);
+  --fc-neutral-text-color: var(--text-muted);
+  --fc-border-color: var(--border-subtle);
+  --fc-button-bg-color: var(--bg-hover);
+  --fc-button-border-color: var(--border-subtle);
+  --fc-button-text-color: var(--text-main);
+  --fc-button-hover-bg-color: var(--border-subtle);
+  --fc-button-hover-border-color: var(--border-subtle);
+  --fc-button-active-bg-color: var(--color-brand-primary, #4AA4E1);
+  --fc-button-active-border-color: var(--color-brand-primary, #4AA4E1);
+  --fc-today-bg-color: var(--bg-hover);
+  --fc-event-text-color: #fff;
+}
+
+/* Day headers (Sun, Mon, Tue…) */
+.fc .fc-col-header-cell-cushion,
+.fc .fc-col-header-cell a {
+  color: var(--text-main) !important;
+  text-decoration: none !important;
+}
+
+/* Day numbers */
+.fc .fc-daygrid-day-number {
+  color: var(--text-main) !important;
+  text-decoration: none !important;
+}
+
+/* "More" link (+2 more) */
+.fc .fc-daygrid-more-link {
+  color: var(--color-brand-primary) !important;
+}
+
+/* Toolbar title (March 2026) */
+.fc .fc-toolbar-title {
+  color: var(--text-main) !important;
+}
+
+/* Toolbar buttons — override specificity */
+.fc .fc-button {
+  background-color: var(--bg-hover) !important;
+  border-color: var(--border-subtle) !important;
+  color: var(--text-main) !important;
+}
+.fc .fc-button:hover {
+  background-color: var(--border-subtle) !important;
+}
+.fc .fc-button-active,
+.fc .fc-button:active {
+  background-color: var(--color-brand-primary) !important;
+  border-color: var(--color-brand-primary) !important;
+  color: #fff !important;
+}
+
+/* Table borders & cell backgrounds */
+.fc .fc-scrollgrid,
+.fc td,
+.fc th {
+  border-color: var(--border-subtle) !important;
+}
+.fc .fc-daygrid-day {
+  background-color: transparent;
+}
+.fc .fc-col-header-cell {
+  background-color: var(--bg-hover);
+}
+
+/* Today highlight */
+.fc .fc-day-today {
+  background-color: var(--bg-hover) !important;
+}
+
+/* Event text */
+.fc .fc-event-title,
+.fc .fc-event-time {
+  color: #fff !important;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+/* ================================
+   Recharts Dark Mode fix
+   Tooltip text needs to use theme color
+   ================================ */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  color: var(--text-main) !important;
+  background-color: var(--bg-card) !important;
+  border-color: var(--border-subtle) !important;
+}
