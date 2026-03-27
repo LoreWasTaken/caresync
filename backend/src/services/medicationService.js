@@ -32,10 +32,24 @@ class MedicationService {
   }
 
   /**
+   * Return a YYYY-MM-DD string from a Date using LOCAL time (not UTC).
+   * Avoids the timezone-shift bug where .toISOString().split('T')[0]
+   * maps midnight-local to the PREVIOUS day in UTC.
+   */
+  _toLocalDateStr(date) {
+    const d = new Date(date);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  /**
    * Determine medication status based on scheduled time and taken time
    */
   _determineMedicationStatus(scheduledTime, takenAt, status) {
     if (status === 'skipped') return 'skipped';
+    if (status === 'missed') return 'missed';
     if (!takenAt) return 'missed';
 
     const scheduled = new Date(scheduledTime);
@@ -157,7 +171,7 @@ class MedicationService {
     const whereClause = { userId: targetUserId };
 
     if (startDate && endDate) {
-      whereClause.takenAt = { [Op.between]: [new Date(startDate), new Date(endDate)] };
+      whereClause.scheduledTime = { [Op.between]: [new Date(startDate), new Date(endDate)] };
     }
 
     if (medicationId) whereClause.medicationId = medicationId;
@@ -170,7 +184,7 @@ class MedicationService {
       }],
       limit: parseInt(limit),
       offset: parseInt(offset),
-      order: [['takenAt', 'DESC']]
+      order: [['scheduledTime', 'DESC']]
     });
 
     return {
@@ -193,17 +207,46 @@ class MedicationService {
       throw new NotFoundError('Medication not found');
     }
 
-    const intake = await Adherence.create({
-      userId: user.id,
-      medicationId,
-      status: status || 'taken',
-      takenAt: takenAt || new Date(),
-      scheduledTime: scheduledTime || new Date()
+    const resolvedScheduledTime = scheduledTime || new Date().toISOString();
+    const resolvedTakenAt = (status === 'taken') ? (takenAt || new Date()) : null;
+
+    // Upsert: if an adherence record already exists for the same medication + scheduledTime,
+    // update it instead of creating a duplicate row.
+    const [intake, created] = await Adherence.findOrCreate({
+      where: {
+        userId: user.id,
+        medicationId,
+        scheduledTime: resolvedScheduledTime,
+      },
+      defaults: {
+        userId: user.id,
+        medicationId,
+        status: status || 'taken',
+        takenAt: resolvedTakenAt,
+        scheduledTime: resolvedScheduledTime,
+      },
     });
 
-    // Update medication stock
-    if (status === 'taken') {
-      await med.decrement('remainingQuantity', { by: 1 });
+    if (!created) {
+      // Record already existed — update it
+      const oldStatus = intake.status;
+      intake.status = status || 'taken';
+      intake.takenAt = resolvedTakenAt;
+      await intake.save();
+
+      // If changing FROM taken to missed, restore stock
+      if (oldStatus === 'taken' && status !== 'taken') {
+        await med.increment('remainingQuantity', { by: 1 });
+      }
+      // If changing TO taken from non-taken, decrement stock
+      if (oldStatus !== 'taken' && status === 'taken') {
+        await med.decrement('remainingQuantity', { by: 1 });
+      }
+    } else {
+      // New record — decrement stock only if taken
+      if (status === 'taken') {
+        await med.decrement('remainingQuantity', { by: 1 });
+      }
     }
 
     return intake;
@@ -217,15 +260,32 @@ class MedicationService {
       throw new AuthorizationError('Access denied to patient data.');
     }
 
-    const whereClause = { userId: targetUserId };
+    // Calculate the date range from the period parameter.
+    const now = new Date();
+    let rangeStart, rangeEnd;
 
     if (startDate && endDate) {
-      whereClause.takenAt = { [Op.between]: [new Date(startDate), new Date(endDate)] };
+      rangeStart = new Date(startDate);
+      rangeEnd = new Date(endDate);
+    } else if (period === 'day') {
+      rangeStart = new Date(now); rangeStart.setHours(0, 0, 0, 0);
+      rangeEnd = now;
+    } else if (period === 'week') {
+      rangeStart = new Date(now.getTime() - 7 * 86400000);
+      rangeEnd = now;
     } else {
-      const now = new Date();
-      const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
-      whereClause.takenAt = { [Op.between]: [thirtyDaysAgo, now] };
+      // 'month' (default) — last 30 days
+      rangeStart = new Date(now.getTime() - 30 * 86400000);
+      rangeEnd = now;
     }
+
+    // BUG FIX: Filter on scheduledTime instead of takenAt.
+    // Missed doses have takenAt=null, so filtering on takenAt excluded them
+    // entirely, inflating the adherence rate to 100% when only "taken" rows existed.
+    const whereClause = {
+      userId: targetUserId,
+      scheduledTime: { [Op.between]: [rangeStart, rangeEnd] },
+    };
 
     const adherenceRecords = await Adherence.findAll({
       where: whereClause,
@@ -233,7 +293,7 @@ class MedicationService {
     });
 
     const total = adherenceRecords.length;
-    const taken = adherenceRecords.filter(r => r.status === 'taken').length;
+    const taken = adherenceRecords.filter(r => ['taken', 'early', 'late'].includes(r.status)).length;
     const missed = adherenceRecords.filter(r => r.status === 'missed').length;
     const skipped = adherenceRecords.filter(r => r.status === 'skipped').length;
     const rate = total > 0 ? Math.round((taken / total) * 100) : 0;
@@ -262,7 +322,11 @@ class MedicationService {
 
     const now = new Date();
     const queryStartDate = startDate ? new Date(startDate) : new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
-    const queryEndDate = endDate ? new Date(endDate) : now;
+    // Ensure the query end date covers the full day (23:59:59.999) so that
+    // medications ending on a specific date include the entire final day.
+    const rawEndDate = endDate ? new Date(endDate) : now;
+    const queryEndDate = new Date(rawEndDate);
+    queryEndDate.setHours(23, 59, 59, 999);
 
     // 1. Fetch all active medications whose date range overlaps the query window.
     //    startDate & endDate are plain DATE columns (not encrypted) so we can filter in SQL.
@@ -288,17 +352,26 @@ class MedicationService {
       order: [['scheduledTime', 'ASC']]
     });
 
-    // Index adherence by medicationId + YYYY-MM-DD for O(1) lookup
+    // Index adherence by medicationId + YYYY-MM-DD + hour for slot-level O(1) lookup.
+    // Using hour granularity prevents duplication when timesPerDay > 1.
+    // CRITICAL: Use LOCAL date/hour (not UTC) so keys match the calendar loop below.
     const adherenceMap = {};
     adherenceRecords.forEach(record => {
-      const date = new Date(record.scheduledTime).toISOString().split('T')[0];
-      const key = `${record.medicationId}_${date}`;
+      const dt = new Date(record.scheduledTime);
+      const date = this._toLocalDateStr(dt);
+      const hour = dt.getHours(); // LOCAL hours — matches _getScheduledHour()
+      const key = `${record.medicationId}_${date}_${hour}`;
       if (!adherenceMap[key]) adherenceMap[key] = [];
       adherenceMap[key].push(record);
     });
 
     // 3. Generate schedule entries from medication master data.
     const calendarData = {};
+    // Track which adherenceMap keys were consumed by virtual slots
+    const consumedKeys = new Set();
+    // Index medications by ID for step 4
+    const medsById = {};
+    medications.forEach(m => { medsById[m.id] = m; });
 
     for (const med of medications) {
       const medStart = new Date(med.startDate);
@@ -317,32 +390,34 @@ class MedicationService {
       endCheck.setHours(23, 59, 59, 999);
 
       while (current <= endCheck) {
-        const dateStr = current.toISOString().split('T')[0];
+        const dateStr = this._toLocalDateStr(current);
 
         if (this._shouldScheduleOnDay(current, medStart, frequency)) {
           if (!calendarData[dateStr]) calendarData[dateStr] = [];
 
-          const key = `${med.id}_${dateStr}`;
-          const existingRecords = adherenceMap[key] || [];
+          // Generate each slot individually, then check for adherence per slot
+          for (let t = 0; t < timesPerDay; t++) {
+            const hour = this._getScheduledHour(t, timesPerDay);
+            const slotKey = `${med.id}_${dateStr}_${hour}`;
+            const slotRecords = adherenceMap[slotKey] || [];
 
-          if (existingRecords.length > 0) {
-            // Real adherence data exists — use it
-            existingRecords.forEach(record => {
-              calendarData[dateStr].push({
-                id: record.id,
-                medicationId: record.medicationId,
-                name: med.name || 'Unknown Medication',
-                dosage: `${med.dosage || ''} ${med.dosageUnit || ''}`.trim(),
-                compartment: med.compartment || null,
-                scheduledTime: record.scheduledTime,
-                takenAt: record.takenAt,
-                status: this._determineMedicationStatus(record.scheduledTime, record.takenAt, record.status)
+            if (slotRecords.length > 0) {
+              consumedKeys.add(slotKey);
+              // Real adherence data exists for this specific slot
+              slotRecords.forEach(record => {
+                calendarData[dateStr].push({
+                  id: record.id,
+                  medicationId: record.medicationId,
+                  name: med.name || 'Unknown Medication',
+                  dosage: `${med.dosage || ''} ${med.dosageUnit || ''}`.trim(),
+                  compartment: med.compartment || null,
+                  scheduledTime: record.scheduledTime,
+                  takenAt: record.takenAt,
+                  status: this._determineMedicationStatus(record.scheduledTime, record.takenAt, record.status)
+                });
               });
-            });
-          } else {
-            // No adherence yet — generate placeholder entries
-            for (let t = 0; t < timesPerDay; t++) {
-              const hour = this._getScheduledHour(t, timesPerDay);
+            } else {
+              // No adherence yet for this slot — generate placeholder
               const scheduledTime = new Date(current);
               scheduledTime.setHours(hour, 0, 0, 0);
 
@@ -366,6 +441,31 @@ class MedicationService {
       }
     }
 
+    // 4. Include orphan adherence records — ad-hoc doses (e.g. "Take Now",
+    //    PRN intakes) that don't match any virtual slot. Without this step
+    //    they would be invisible to the dashboard cards and chart.
+    for (const [key, records] of Object.entries(adherenceMap)) {
+      if (consumedKeys.has(key)) continue;
+
+      for (const record of records) {
+        const dt = new Date(record.scheduledTime);
+        const dateStr = this._toLocalDateStr(dt);
+        if (!calendarData[dateStr]) calendarData[dateStr] = [];
+
+        const med = medsById[record.medicationId];
+        calendarData[dateStr].push({
+          id: record.id,
+          medicationId: record.medicationId,
+          name: med?.name || 'Unknown Medication',
+          dosage: med ? `${med.dosage || ''} ${med.dosageUnit || ''}`.trim() : '',
+          compartment: med?.compartment || null,
+          scheduledTime: record.scheduledTime,
+          takenAt: record.takenAt,
+          status: this._determineMedicationStatus(record.scheduledTime, record.takenAt, record.status)
+        });
+      }
+    }
+
     const result = Object.keys(calendarData)
       .sort()
       .map(date => ({ date, medications: calendarData[date] }));
@@ -382,6 +482,12 @@ class MedicationService {
    */
   _shouldScheduleOnDay(currentDate, medStartDate, frequency) {
     switch (frequency) {
+      case 'as needed':
+      case 'as_needed':
+      case 'prn':
+        // PRN medications are taken on-demand — they cannot generate
+        // scheduled time slots and therefore cannot be "missed".
+        return false;
       case 'daily':
         return true;
       case 'weekly': {

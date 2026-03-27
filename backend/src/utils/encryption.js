@@ -6,12 +6,17 @@ const MASTER_KEY = process.env.MASTER_KEY; // Must be 32 bytes for aes-256
 const IV_LENGTH = 16; // AES always uses 16-byte IV
 
 if (!MASTER_KEY) {
-  throw new Error('MASTER_KEY environment variable is missing');
+  // Warn at load time but don't throw — allow the module to be required safely.
+  // Functions will throw at CALL time if the key is actually needed.
+  console.warn('[encryption] MASTER_KEY environment variable is missing. Encrypt/decrypt will fail at call time.');
 }
 
 // AUTO-FIX: Hash the key to ensure it is exactly 32 bytes (256 bits)
 // This prevents "Invalid Key Length" errors
 const getKey = () => {
+    if (!MASTER_KEY) {
+      throw new Error('MASTER_KEY environment variable is missing — cannot encrypt/decrypt.');
+    }
     return crypto.createHash('sha256').update(MASTER_KEY).digest();
 };
 

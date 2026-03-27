@@ -1,6 +1,6 @@
 // src/features/dashboard/pages/PatientDashboard.tsx
-// Real data dashboard — consumes medication + adherence APIs, renders recharts.
-import { useEffect, useState } from 'react'
+// Real-data dashboard — consumes medication + adherence APIs, renders Recharts.
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { client } from '../../../shared/api/client'
 import {
@@ -11,6 +11,8 @@ import {
   XCircle,
   Clock,
   ArrowRight,
+  Loader2,
+  PlusCircle,
 } from 'lucide-react'
 import {
   BarChart,
@@ -20,7 +22,6 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
-  Cell,
 } from 'recharts'
 
 /* ------------------------------------------------------------------ */
@@ -36,18 +37,19 @@ interface MedSummary {
   frequency: string
 }
 
-interface AdherenceStats {
+interface DerivedStats {
   rate: number
   total: number
   taken: number
   missed: number
-  skipped: number
-  period: string
 }
 
 interface DailyAdherence {
   date: string
-  rate: number
+  taken: number
+  late: number
+  missed: number
+  total: number
 }
 
 /* ------------------------------------------------------------------ */
@@ -57,66 +59,109 @@ interface DailyAdherence {
 export const PatientDashboard = () => {
   const [meds, setMeds] = useState<MedSummary[]>([])
   const [totalMeds, setTotalMeds] = useState(0)
-  const [stats, setStats] = useState<AdherenceStats | null>(null)
+  const [stats, setStats] = useState<DerivedStats | null>(null)
   const [dailyData, setDailyData] = useState<DailyAdherence[]>([])
   const [loading, setLoading] = useState(true)
+  const [takingNow, setTakingNow] = useState<string | null>(null)
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        // Fire all requests in parallel
-        const [medsRes, statsRes, scheduleRes] = await Promise.allSettled([
-          client.get('/medications', { params: { limit: 5, status: 'active' } }),
-          client.get('/medications/adherence/stats', { params: { period: 'week' } }),
-          client.get('/medications/schedule', {
-            params: {
-              startDate: new Date(Date.now() - 6 * 86400000).toISOString(),
-              endDate: new Date().toISOString(),
-            },
-          }),
-        ])
+  const fetchDashboard = useCallback(async () => {
+    try {
+      const [medsRes, scheduleRes] = await Promise.allSettled([
+        client.get('/medications', { params: { limit: 5, status: 'active' } }),
+        client.get('/medications/schedule', {
+          params: {
+            startDate: new Date(Date.now() - 6 * 86400000).toISOString(),
+            endDate: new Date().toISOString(),
+          },
+        }),
+      ])
 
-        // Medications
-        if (medsRes.status === 'fulfilled') {
-          setMeds(medsRes.value.data?.data ?? [])
-          setTotalMeds(medsRes.value.data?.pagination?.totalItems ?? medsRes.value.data?.data?.length ?? 0)
-        }
-
-        // Adherence stats
-        if (statsRes.status === 'fulfilled') {
-          setStats(statsRes.value.data?.data ?? null)
-        }
-
-        // Build daily adherence from schedule for bar chart
-        if (scheduleRes.status === 'fulfilled') {
-          const calendar: { date: string; medications: { status: string }[] }[] =
-            scheduleRes.value.data?.data?.calendar ?? []
-          const daily = calendar.map((day) => {
-            const total = day.medications.length
-            const taken = day.medications.filter(
-              (m) => m.status === 'taken' || m.status === 'early' || m.status === 'late'
-            ).length
-            return {
-              date: new Date(day.date).toLocaleDateString('en', { weekday: 'short' }),
-              rate: total > 0 ? Math.round((taken / total) * 100) : 0,
-            }
-          })
-          setDailyData(daily)
-        }
-      } catch {
-        // Individual failures handled by allSettled
-      } finally {
-        setLoading(false)
+      // Medications
+      if (medsRes.status === 'fulfilled') {
+        const d = medsRes.value.data?.data
+        const list = Array.isArray(d) ? d : d?.medications ?? []
+        setMeds(list.slice(0, 5))
+        setTotalMeds(medsRes.value.data?.pagination?.totalItems ?? list.length)
       }
+
+      // FIX 1: Derive BOTH the chart data AND the top-card stats from the
+      // SAME schedule payload. This eliminates the "split-brain" where the
+      // chart showed virtual missed doses but the cards only read from the
+      // Adherence DB table (which had no rows for unrecorded doses).
+      if (scheduleRes.status === 'fulfilled') {
+        const calendar: { date: string; medications: { status: string }[] }[] =
+          scheduleRes.value.data?.data?.calendar ?? []
+
+        let weekTaken = 0
+        let weekLate = 0
+        let weekMissed = 0
+
+        const daily = calendar.map((day) => {
+          const resolved = day.medications.filter(
+            (m) => m.status !== 'scheduled'
+          )
+          const taken = resolved.filter(
+            (m) => m.status === 'taken' || m.status === 'early'
+          ).length
+          const late = resolved.filter((m) => m.status === 'late').length
+          const missed = resolved.filter(
+            (m) => m.status === 'missed' || m.status === 'skipped'
+          ).length
+
+          weekTaken += taken + late
+          weekLate += late
+          weekMissed += missed
+
+          return {
+            date: new Date(day.date + 'T12:00:00').toLocaleDateString('en', { weekday: 'short' }),
+            taken,
+            late,
+            missed,
+            total: resolved.length,
+          }
+        })
+
+        const weekTotal = weekTaken + weekMissed
+        setStats({
+          rate: weekTotal > 0 ? Math.round((weekTaken / weekTotal) * 100) : 0,
+          total: weekTotal,
+          taken: weekTaken,
+          missed: weekMissed,
+        })
+
+        // Filter out days with no resolved doses so the chart
+        // doesn't show empty bars for days with only future doses.
+        setDailyData(daily.filter((d) => d.total > 0))
+      }
+    } catch {
+      // Individual failures handled by allSettled
+    } finally {
+      setLoading(false)
     }
-    load()
   }, [])
 
-  /* ---------------------------------------------------------------- */
-  /*  Bar colour helper                                                */
-  /* ---------------------------------------------------------------- */
-  const barColour = (rate: number) =>
-    rate >= 90 ? '#22c55e' : rate >= 70 ? '#eab308' : '#ef4444'
+  useEffect(() => {
+    fetchDashboard()
+  }, [fetchDashboard])
+
+  /* ---- Take Now handler ---- */
+  const handleTakeNow = async (med: MedSummary) => {
+    setTakingNow(med.id)
+    try {
+      const now = new Date().toISOString()
+      await client.post('/medications/adherence', {
+        medicationId: med.id,
+        status: 'taken',
+        scheduledTime: now,
+        takenAt: now,
+      })
+      await fetchDashboard()
+    } catch {
+      // silent — user can retry
+    } finally {
+      setTakingNow(null)
+    }
+  }
 
   /* ---------------------------------------------------------------- */
   /*  Render                                                           */
@@ -144,19 +189,19 @@ export const PatientDashboard = () => {
           icon={<TrendingUp size={18} />}
           iconBg="bg-green-500/10 text-green-500"
           label="Adherence Rate"
-          value={stats ? `${stats.rate}%` : '–'}
+          value={stats && stats.total > 0 ? `${stats.rate}%` : '–'}
         />
         <MetricCard
           icon={<CheckCircle2 size={18} />}
           iconBg="bg-emerald-500/10 text-emerald-500"
           label="Doses Taken"
-          value={stats?.taken ?? '–'}
+          value={stats && stats.total > 0 ? stats.taken : '–'}
         />
         <MetricCard
           icon={<XCircle size={18} />}
           iconBg="bg-red-500/10 text-red-500"
           label="Doses Missed"
-          value={stats?.missed ?? '–'}
+          value={stats && stats.total > 0 ? stats.missed : '–'}
         />
       </div>
 
@@ -167,7 +212,7 @@ export const PatientDashboard = () => {
           <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-2">
               <Pill className="text-brand-primary w-5 h-5" />
-              <h2 className="font-semibold text-lg">Upcoming Doses</h2>
+              <h2 className="font-semibold text-lg text-text-main">Upcoming Doses</h2>
             </div>
             <Link
               to="/app/medications"
@@ -192,7 +237,7 @@ export const PatientDashboard = () => {
                   key={med.id}
                   className="flex justify-between items-center p-3.5 bg-bg-page rounded-xl border border-border-subtle"
                 >
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <div className="font-semibold text-text-main">{med.name}</div>
                     <div className="text-xs text-text-muted mt-0.5 flex items-center gap-1">
                       <Clock size={10} />
@@ -200,9 +245,19 @@ export const PatientDashboard = () => {
                       {med.frequency ? ` \u2022 ${med.frequency}` : ''}
                     </div>
                   </div>
-                  <div className="w-8 h-8 rounded-full bg-brand-primary/10 flex items-center justify-center text-brand-primary font-bold text-sm">
-                    {med.compartment ?? '–'}
-                  </div>
+                  <button
+                    onClick={() => handleTakeNow(med)}
+                    disabled={takingNow === med.id}
+                    className="ml-2 inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors disabled:opacity-50 shrink-0"
+                    title="Record this dose as taken right now"
+                  >
+                    {takingNow === med.id ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <PlusCircle size={12} />
+                    )}
+                    Take Now
+                  </button>
                 </div>
               ))}
             </div>
@@ -213,7 +268,7 @@ export const PatientDashboard = () => {
         <div className="bg-bg-card p-6 rounded-2xl border border-border-subtle shadow-sm">
           <div className="flex items-center gap-2 mb-5">
             <Activity className="text-green-500 w-5 h-5" />
-            <h2 className="font-semibold text-lg">Weekly Adherence</h2>
+            <h2 className="font-semibold text-lg text-text-main">Weekly Adherence</h2>
           </div>
 
           {dailyData.length === 0 ? (
@@ -224,36 +279,36 @@ export const PatientDashboard = () => {
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={192}>
-              <BarChart data={dailyData} barSize={28}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border-subtle, #e5e7eb)" />
+              <BarChart data={dailyData}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-subtle, #e5e7eb)" />
                 <XAxis
                   dataKey="date"
-                  tick={{ fontSize: 11, fill: 'var(--color-text-muted, #9ca3af)' }}
+                  tick={{ fontSize: 11, fill: 'var(--text-muted, #9ca3af)' }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  domain={[0, 100]}
-                  tick={{ fontSize: 11, fill: 'var(--color-text-muted, #9ca3af)' }}
+                  tick={{ fontSize: 11, fill: 'var(--text-muted, #9ca3af)' }}
                   axisLine={false}
                   tickLine={false}
-                  tickFormatter={(v) => `${v}%`}
-                  width={40}
+                  allowDecimals={false}
+                  width={30}
                 />
                 <Tooltip
-                  formatter={(value) => [`${value}%`, 'Adherence']}
                   contentStyle={{
-                    backgroundColor: 'var(--color-bg-card, #fff)',
-                    border: '1px solid var(--color-border-subtle, #e5e7eb)',
+                    backgroundColor: 'var(--bg-card, #fff)',
+                    color: 'var(--text-main, #111)',
+                    border: '1px solid var(--border-subtle, #e5e7eb)',
                     borderRadius: '0.5rem',
                     fontSize: '0.75rem',
                   }}
+                  labelStyle={{ color: 'var(--text-main, #111)' }}
+                  itemStyle={{ color: 'var(--text-main, #111)' }}
+                  cursor={{ fill: 'var(--bg-hover, rgba(0,0,0,0.05))' }}
                 />
-                <Bar dataKey="rate" radius={[4, 4, 0, 0]}>
-                  {dailyData.map((entry, i) => (
-                    <Cell key={i} fill={barColour(entry.rate)} />
-                  ))}
-                </Bar>
+                <Bar dataKey="taken" name="On Time" stackId="a" fill="#22c55e" isAnimationActive={false} />
+                <Bar dataKey="late" name="Late" stackId="a" fill="#eab308" isAnimationActive={false} />
+                <Bar dataKey="missed" name="Missed" stackId="a" fill="#ef4444" isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           )}

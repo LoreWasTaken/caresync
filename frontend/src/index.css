@@ -235,10 +235,21 @@ body {
   background-color: var(--bg-hover) !important;
 }
 
-/* Event text */
-.fc .fc-event-title,
-.fc .fc-event-time {
+/* Event text — block events (allDay) get white text on colored background */
+.fc .fc-daygrid-block-event .fc-event-title,
+.fc .fc-daygrid-block-event .fc-event-time,
+.fc .fc-h-event .fc-event-title,
+.fc .fc-h-event .fc-event-time {
   color: #fff !important;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+/* Dot events (non-allDay in dayGridMonth) — text must use the theme color,
+   NOT white, because there is no colored background block behind the text. */
+.fc .fc-daygrid-dot-event .fc-event-title,
+.fc .fc-daygrid-dot-event .fc-event-time {
+  color: var(--text-main) !important;
   font-weight: 600;
   font-size: 0.75rem;
 }

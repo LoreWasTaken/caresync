@@ -1,28 +1,35 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const medicationController = require('../controllers/medicationController');
-const { authMiddleware } = require('../middleware/auth');
-const { asyncHandler } = require('../middleware/errorHandler');
-const { handleValidationErrors } = require('../middleware/validationMiddleware');
-const { body, query, param } = require('express-validator');
+const medicationController = require("../controllers/medicationController");
+const { authMiddleware } = require("../middleware/auth");
+const { asyncHandler } = require("../middleware/errorHandler");
+const {
+  handleValidationErrors,
+} = require("../middleware/validationMiddleware");
+const { body, query, param } = require("express-validator");
 
 // --- VALIDATION RULES ---
 
 const validateMedication = [
-  body('name').trim().notEmpty().withMessage('Medication name is required'),
-  body('dosage').trim().notEmpty().withMessage('Dosage is required'),
-  body('dosageUnit').trim().notEmpty().withMessage('Dosage unit is required'),
-  body('frequency').optional().trim(),
-  body('timesPerDay').optional().isInt({ min: 1 }),
-  body('totalQuantity').optional().isInt({ min: 0 }),
-  body('startDate').optional().isISO8601()
+  body("name").trim().notEmpty().withMessage("Medication name is required"),
+  body("dosage").trim().notEmpty().withMessage("Dosage is required"),
+  body("dosageUnit").trim().notEmpty().withMessage("Dosage unit is required"),
+  body("frequency").optional().trim(),
+  body("timesPerDay").optional().isInt({ min: 1 }),
+  body("totalQuantity").optional().isInt({ min: 0 }),
+  body("startDate").optional().isISO8601(),
 ];
 
 const validateAdherenceRecord = [
-  body('medicationId').isUUID().withMessage('Invalid medication ID'),
-  body('status').isIn(['taken', 'skipped', 'missed', 'late', 'early']).withMessage('Invalid status'),
-  body('takenAt').optional().isISO8601().withMessage('Invalid taken time'),
-  body('scheduledTime').isISO8601().withMessage('Invalid scheduled time')
+  body("medicationId").isUUID().withMessage("Invalid medication ID"),
+  body("status")
+    .isIn(["taken", "skipped", "missed", "late", "early"])
+    .withMessage("Invalid status"),
+  body("takenAt")
+    .optional({ values: "null" })
+    .isISO8601()
+    .withMessage("Invalid taken time"),
+  body("scheduledTime").isISO8601().withMessage("Invalid scheduled time"),
 ];
 
 // ==========================================
@@ -74,7 +81,11 @@ const validateAdherenceRecord = [
  */
 // Matches GET /api/medications/schedule
 // (Moved to top so "schedule" isn't treated as an :id)
-router.get('/schedule', authMiddleware, asyncHandler(medicationController.getCalendarData.bind(medicationController)));
+router.get(
+  "/schedule",
+  authMiddleware,
+  asyncHandler(medicationController.getCalendarData.bind(medicationController)),
+);
 
 /**
  * @swagger
@@ -118,7 +129,13 @@ router.get('/schedule', authMiddleware, asyncHandler(medicationController.getCal
  *                   type: object
  */
 // Matches POST /api/medications/adherence
-router.post('/adherence', authMiddleware, validateAdherenceRecord, handleValidationErrors, asyncHandler(medicationController.recordAdherence.bind(medicationController)));
+router.post(
+  "/adherence",
+  authMiddleware,
+  validateAdherenceRecord,
+  handleValidationErrors,
+  asyncHandler(medicationController.recordAdherence.bind(medicationController)),
+);
 
 /**
  * @swagger
@@ -174,8 +191,13 @@ router.post('/adherence', authMiddleware, validateAdherenceRecord, handleValidat
  *                       type: string
  */
 // Matches GET /api/medications/adherence/stats
-router.get('/adherence/stats', authMiddleware, asyncHandler(medicationController.getAdherenceStats.bind(medicationController)));
-
+router.get(
+  "/adherence/stats",
+  authMiddleware,
+  asyncHandler(
+    medicationController.getAdherenceStats.bind(medicationController),
+  ),
+);
 
 // ==========================================
 // 2. GENERIC / PARAMETER ROUTES (Must come last!)
@@ -228,7 +250,11 @@ router.get('/adherence/stats', authMiddleware, asyncHandler(medicationController
  *                 pagination:
  *                   type: object
  */
-router.get('/', authMiddleware, asyncHandler(medicationController.getMedications.bind(medicationController)));
+router.get(
+  "/",
+  authMiddleware,
+  asyncHandler(medicationController.getMedications.bind(medicationController)),
+);
 
 /**
  * @swagger
@@ -275,14 +301,22 @@ router.get('/', authMiddleware, asyncHandler(medicationController.getMedications
  *                 data:
  *                   type: object
  */
-router.post('/', authMiddleware, validateMedication, handleValidationErrors, asyncHandler(medicationController.createMedication.bind(medicationController)));
+router.post(
+  "/",
+  authMiddleware,
+  validateMedication,
+  handleValidationErrors,
+  asyncHandler(
+    medicationController.createMedication.bind(medicationController),
+  ),
+);
 
 router.post(
-  '/pem-scan',
+  "/pem-scan",
   authMiddleware,
-  body('qrData').notEmpty().withMessage('QR Data string is required'),
+  body("qrData").notEmpty().withMessage("QR Data string is required"),
   handleValidationErrors,
-  asyncHandler(medicationController.processPemScan.bind(medicationController))
+  asyncHandler(medicationController.processPemScan.bind(medicationController)),
 );
 
 // :id routes match ANYTHING, so keep them at the bottom
@@ -317,7 +351,11 @@ router.post(
  *                 data:
  *                   type: object
  */
-router.get('/:id', authMiddleware, asyncHandler(medicationController.getMedication.bind(medicationController)));
+router.get(
+  "/:id",
+  authMiddleware,
+  asyncHandler(medicationController.getMedication.bind(medicationController)),
+);
 
 /**
  * @swagger
@@ -370,7 +408,15 @@ router.get('/:id', authMiddleware, asyncHandler(medicationController.getMedicati
  *                 data:
  *                   type: object
  */
-router.put('/:id', authMiddleware, validateMedication, handleValidationErrors, asyncHandler(medicationController.updateMedication.bind(medicationController)));
+router.put(
+  "/:id",
+  authMiddleware,
+  validateMedication,
+  handleValidationErrors,
+  asyncHandler(
+    medicationController.updateMedication.bind(medicationController),
+  ),
+);
 
 /**
  * @swagger
@@ -399,6 +445,12 @@ router.put('/:id', authMiddleware, validateMedication, handleValidationErrors, a
  *                 message:
  *                   type: string
  */
-router.delete('/:id', authMiddleware, asyncHandler(medicationController.deleteMedication.bind(medicationController)));
+router.delete(
+  "/:id",
+  authMiddleware,
+  asyncHandler(
+    medicationController.deleteMedication.bind(medicationController),
+  ),
+);
 
 module.exports = router;

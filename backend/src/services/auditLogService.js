@@ -1,25 +1,30 @@
-const { AuditLog } = require('../models');
+const { AuditLog } = require("../models");
+const { encrypt } = require("../utils/encryption");
 
 class AuditLogService {
   /**
    * Create an audit log entry
    */
-  static async logAction({ 
-    userId, 
-    action, 
-    entityType, 
-    entityId, 
-    oldValues, 
-    newValues, 
-    ipAddress, 
-    userAgent, 
-    justification = 'SYSTEM_ACTION' // Default justification
+  static async logAction({
+    userId,
+    action,
+    entityType,
+    entityId,
+    oldValues,
+    newValues,
+    ipAddress,
+    userAgent,
+    justification = "SYSTEM_ACTION", // Default justification
   }) {
     try {
-      // CNPD Requirement: Separation of duties. 
+      // CNPD Requirement: Separation of duties.
       // If the log contains sensitive data, encrypt the values payload.
-      const safeOldValues = oldValues ? encrypt(JSON.stringify(oldValues)) : null;
-      const safeNewValues = newValues ? encrypt(JSON.stringify(newValues)) : null;
+      const safeOldValues = oldValues
+        ? encrypt(JSON.stringify(oldValues))
+        : null;
+      const safeNewValues = newValues
+        ? encrypt(JSON.stringify(newValues))
+        : null;
 
       const logEntry = await AuditLog.create({
         userId,
@@ -31,14 +36,14 @@ class AuditLogService {
         ipAddress,
         userAgent,
         metadata: {
-            complianceStandard: 'CNPD-58/2019',
-            justification: justification,
-            timestamp: new Date().toISOString()
-        }
+          complianceStandard: "CNPD-58/2019",
+          justification: justification,
+          timestamp: new Date().toISOString(),
+        },
       });
       return logEntry;
     } catch (error) {
-      console.error('Failed to create audit log:', error);
+      console.error("Failed to create audit log:", error);
       // In a strict CNPD environment, if audit fails, the action might need to rollback.
       // For this demo, we allow it to proceed but log the failure to stderr.
       return null;
@@ -51,7 +56,7 @@ class AuditLogService {
   static async getUserAuditLogs(userId) {
     return await AuditLog.findAll({
       where: { userId },
-      order: [['createdAt', 'DESC']]
+      order: [["createdAt", "DESC"]],
     });
   }
 
@@ -61,7 +66,7 @@ class AuditLogService {
   static async getEntityAuditLogs(entityType, entityId) {
     return await AuditLog.findAll({
       where: { entityType, entityId },
-      order: [['createdAt', 'DESC']]
+      order: [["createdAt", "DESC"]],
     });
   }
 
@@ -70,7 +75,7 @@ class AuditLogService {
    */
   static async getAllAuditLogs() {
     return await AuditLog.findAll({
-      order: [['createdAt', 'DESC']]
+      order: [["createdAt", "DESC"]],
     });
   }
 }
