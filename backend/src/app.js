@@ -56,7 +56,10 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
       scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "https:"],
+      imgSrc: ["'self'", "data:", "blob:", "https:"],
+      // Allow blob: for inline PDF preview (<object>) and prescription upload
+      objectSrc: ["'self'", "blob:"],
+      frameSrc: ["'self'", "blob:"],
       // Allow localhost API and WebSockets
       connectSrc: ["'self'", "http://localhost:5000", "https://api.caresync.com", "wss:", "ws:"],
     },

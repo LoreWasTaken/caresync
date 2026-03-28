@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Clock,
   Package,
+  FileUp,
 } from 'lucide-react'
 
 export const MyMedicationsPage = () => {
@@ -56,13 +57,22 @@ export const MyMedicationsPage = () => {
           </p>
         </div>
 
-        <Link
-          to="/app/medications/add"
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-brand-primary hover:bg-brand-light text-white text-sm font-semibold rounded-lg transition-colors"
-        >
-          <Plus size={16} />
-          Add Medication
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/app/medications/add?mode=upload"
+            className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-bg-card border border-border-subtle hover:border-brand-primary/50 text-text-main text-sm font-semibold rounded-lg transition-colors"
+          >
+            <FileUp size={15} className="text-brand-primary" />
+            <span className="hidden sm:inline">Upload Prescription</span>
+          </Link>
+          <Link
+            to="/app/medications/add"
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-brand-primary hover:bg-brand-light text-white text-sm font-semibold rounded-lg transition-colors"
+          >
+            <Plus size={16} />
+            Add Medication
+          </Link>
+        </div>
       </div>
 
       {/* Error banner */}

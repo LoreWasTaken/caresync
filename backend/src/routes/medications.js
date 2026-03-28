@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const multer = require("multer");
 const medicationController = require("../controllers/medicationController");
 const { authMiddleware } = require("../middleware/auth");
 const { asyncHandler } = require("../middleware/errorHandler");
@@ -7,6 +8,16 @@ const {
   handleValidationErrors,
 } = require("../middleware/validationMiddleware");
 const { body, query, param } = require("express-validator");
+
+// Multer — memory storage so we get a Buffer for the parser
+const prescriptionUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === "application/pdf") cb(null, true);
+    else cb(new Error("Only PDF files are allowed"), false);
+  },
+});
 
 // --- VALIDATION RULES ---
 
@@ -317,6 +328,16 @@ router.post(
   body("qrData").notEmpty().withMessage("QR Data string is required"),
   handleValidationErrors,
   asyncHandler(medicationController.processPemScan.bind(medicationController)),
+);
+
+// SNS Prescription PDF parser
+router.post(
+  "/parse-prescription",
+  authMiddleware,
+  prescriptionUpload.single("prescription"),
+  asyncHandler(
+    medicationController.parsePrescription.bind(medicationController),
+  ),
 );
 
 // :id routes match ANYTHING, so keep them at the bottom

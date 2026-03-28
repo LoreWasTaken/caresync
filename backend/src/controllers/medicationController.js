@@ -1,5 +1,6 @@
 const medicationService = require('../services/medicationService');
 const pemParserService = require('../services/pemParserService');
+const prescriptionParser = require('../services/prescriptionParser');
 
 const logger = require('../utils/logger');
 const ApiResponse = require('../utils/ApiResponse');
@@ -139,6 +140,33 @@ class MedicationController {
       res.status(201).json(response);
     } catch (error) {
       logger.error('PEM Scan error:', error);
+      throw error;
+    }
+  }
+
+  // ==========================================
+  // PRESCRIPTION PARSER
+  // ==========================================
+
+  async parsePrescription(req, res) {
+    try {
+      if (!req.file) {
+        throw new Error('No prescription file uploaded');
+      }
+
+      const forceAI = req.body.forceAI === 'true';
+      const result = await prescriptionParser.parsePrescription(req.file.buffer, forceAI);
+
+      const response = ApiResponse.success(
+        result,
+        result.success
+          ? `Parsed ${result.medications.length} medication(s) via ${result.mode}`
+          : 'No medications could be extracted from this document'
+      );
+
+      res.json(response);
+    } catch (error) {
+      logger.error('Prescription parse error:', error);
       throw error;
     }
   }
