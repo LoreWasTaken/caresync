@@ -328,10 +328,10 @@ function parseDuration(durStr) {
  * Parse a PDF prescription buffer.
  *
  * @param {Buffer} pdfBuffer  Raw PDF file bytes
- * @param {boolean} forceAI   Skip fast path and force AI processing
+ * @param {'regex'|'ai'} engine  Extraction engine: 'regex' for Fast Path, 'ai' for Ollama LLM
  * @returns {Promise<{ success: boolean, mode: string, medications: Array, rawText: string }>}
  */
-async function parsePrescription(pdfBuffer, forceAI = false) {
+async function parsePrescription(pdfBuffer, engine = 'regex') {
   const startTime = Date.now();
 
   // 1. Extract text
@@ -342,29 +342,26 @@ async function parsePrescription(pdfBuffer, forceAI = false) {
   let mode = 'Fast Path (Regex)';
   let isHighConfidence = false;
 
-  // 2. Parse
-  if (forceAI) {
-    mode = 'AI Fallback (Qwen 2.5)';
+  // 2. Parse — explicit engine selection, no automatic fallback
+  if (engine === 'ai') {
+    logger.info('Prescription parser: AI mode selected by user');
+    mode = 'Deep AI (Qwen 2.5 via Ollama)';
     results = await extractWithOllama(rawText);
+    if (results.length === 0) {
+      logger.warn('Prescription parser: AI returned 0 results — is Ollama running?');
+    }
   } else {
+    logger.info('Prescription parser: Regex mode selected by user');
+    mode = 'Fast Path (Regex)';
     results = attemptFastParse(rawText);
     isHighConfidence = results.length > 0 && results.every((r) => r.confidence >= 2);
-
-    if (!isHighConfidence) {
-      logger.info('Prescription parser: low confidence, attempting AI fallback');
-      const aiResults = await extractWithOllama(rawText);
-      if (aiResults.length > 0) {
-        results = aiResults;
-        mode = 'AI Fallback (Qwen 2.5)';
-      }
-    }
   }
 
   // 3. Normalize & map to CareSync format
   const medications = results.map((m, idx) => {
     const cleanName = cleanDrugName(m.drug_name);
     const cleanFreq =
-      isHighConfidence && !forceAI ? m.frequency : normalizeFrequency(m.frequency);
+      isHighConfidence && engine === 'regex' ? m.frequency : normalizeFrequency(m.frequency);
     const cleanForm = normalizeTerm(m.form, VOCABULARY.forms) || m.form || 'N/A';
     const { dosage, dosageUnit } = parseDoseString(m.dosage);
     const { frequency, timesPerDay } = mapFrequencyToCareSync(cleanFreq);

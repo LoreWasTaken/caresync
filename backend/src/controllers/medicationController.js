@@ -154,8 +154,10 @@ class MedicationController {
         throw new Error('No prescription file uploaded');
       }
 
-      const forceAI = req.body.forceAI === 'true';
-      const result = await prescriptionParser.parsePrescription(req.file.buffer, forceAI);
+      // Explicit engine selection: 'regex' (default) or 'ai'
+      const engine = req.body.engine === 'ai' ? 'ai' : 'regex';
+      logger.info('Prescription parse requested with engine: %s', engine);
+      const result = await prescriptionParser.parsePrescription(req.file.buffer, engine);
 
       const response = ApiResponse.success(
         result,

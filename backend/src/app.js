@@ -60,6 +60,8 @@ app.use(helmet({
       // Allow blob: for inline PDF preview (<object>) and prescription upload
       objectSrc: ["'self'", "blob:"],
       frameSrc: ["'self'", "blob:"],
+      // PDF.js web worker
+      workerSrc: ["'self'", "blob:"],
       // Allow localhost API and WebSockets
       connectSrc: ["'self'", "http://localhost:5000", "https://api.caresync.com", "wss:", "ws:"],
     },
