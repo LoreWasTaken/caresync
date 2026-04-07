@@ -1,6 +1,6 @@
 // src/features/dashboard/pages/PatientDashboard.tsx
 // Real-data dashboard — consumes medication + adherence APIs, renders Recharts.
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { client } from '../../../shared/api/client'
 import {
@@ -13,6 +13,7 @@ import {
   ArrowRight,
   Loader2,
   PlusCircle,
+  AlertTriangle,
 } from 'lucide-react'
 import {
   BarChart,
@@ -35,6 +36,10 @@ interface MedSummary {
   dosageUnit: string
   compartment: number | null
   frequency: string
+  // Inventory fields — surfaced so the "Take Now" button can disable
+  // itself when stock is exhausted (Edge Case 2 frontend guard).
+  remainingQuantity: number | null
+  totalQuantity: number | null
 }
 
 interface DerivedStats {
@@ -63,6 +68,20 @@ export const PatientDashboard = () => {
   const [dailyData, setDailyData] = useState<DailyAdherence[]>([])
   const [loading, setLoading] = useState(true)
   const [takingNow, setTakingNow] = useState<string | null>(null)
+  // ──────────────────────────────────────────────────────────────────
+  // DOUBLE-CLICK RACE CONDITION GUARD (frontend layer)
+  //
+  // The `disabled={takingNow === med.id}` state-based guard does NOT
+  // survive a *truly* fast double-click — React batches state updates
+  // and the second click can reach handleTakeNow() before `takingNow`
+  // has been committed. A ref is synchronous: setting it before the
+  // network call closes the gap immediately, so the second click
+  // sees the lock and returns.
+  //
+  // This is the *first* line of defence. The backend transaction +
+  // composite UNIQUE index (Adherence model) is the *real* fix.
+  // ──────────────────────────────────────────────────────────────────
+  const inFlightTakeRef = useRef<Set<string>>(new Set())
 
   const fetchDashboard = useCallback(async () => {
     try {
@@ -80,7 +99,19 @@ export const PatientDashboard = () => {
       if (medsRes.status === 'fulfilled') {
         const d = medsRes.value.data?.data
         const list = Array.isArray(d) ? d : d?.medications ?? []
-        setMeds(list.slice(0, 5))
+        // Carry forward inventory fields so the Take Now button can
+        // refuse to fire when the medication is depleted.
+        const summarised: MedSummary[] = list.slice(0, 5).map((m: any) => ({
+          id: m.id,
+          name: m.name,
+          dosage: m.dosage,
+          dosageUnit: m.dosageUnit,
+          compartment: m.compartment ?? null,
+          frequency: m.frequency,
+          remainingQuantity: m.remainingQuantity ?? null,
+          totalQuantity: m.totalQuantity ?? null,
+        }))
+        setMeds(summarised)
         setTotalMeds(medsRes.value.data?.pagination?.totalItems ?? list.length)
       }
 
@@ -144,8 +175,23 @@ export const PatientDashboard = () => {
     fetchDashboard()
   }, [fetchDashboard])
 
-  /* ---- Take Now handler ---- */
+  /* ---- Take Now handler ──────────────────────────────────────────
+     Defends against THREE failure modes:
+       1. Double-click race: synchronous ref-based lock returns
+          immediately on the second click. Backend transaction is
+          the authoritative defence, this just avoids the network
+          round-trip.
+       2. Depleted inventory: refuses if remainingQuantity hits 0.
+          Backend will also reject (409 Conflict), this is just UX.
+       3. Stale stock display: re-fetches the dashboard after each
+          successful dose so the next click sees the new count. */
   const handleTakeNow = async (med: MedSummary) => {
+    // Race-condition lock — synchronous, beats React batching.
+    if (inFlightTakeRef.current.has(med.id)) return
+    // Inventory guard — never POST a dose for a depleted medication.
+    if (med.remainingQuantity != null && med.remainingQuantity <= 0) return
+
+    inFlightTakeRef.current.add(med.id)
     setTakingNow(med.id)
     try {
       const now = new Date().toISOString()
@@ -157,8 +203,9 @@ export const PatientDashboard = () => {
       })
       await fetchDashboard()
     } catch {
-      // silent — user can retry
+      // silent — user can retry. Backend already rolled back on error.
     } finally {
+      inFlightTakeRef.current.delete(med.id)
       setTakingNow(null)
     }
   }
@@ -232,34 +279,57 @@ export const PatientDashboard = () => {
             </div>
           ) : (
             <div className="space-y-3">
-              {meds.map((med) => (
-                <div
-                  key={med.id}
-                  className="flex justify-between items-center p-3.5 bg-bg-page rounded-xl border border-border-subtle"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="font-semibold text-text-main">{med.name}</div>
-                    <div className="text-xs text-text-muted mt-0.5 flex items-center gap-1">
-                      <Clock size={10} />
-                      {med.dosage} {med.dosageUnit}
-                      {med.frequency ? ` \u2022 ${med.frequency}` : ''}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleTakeNow(med)}
-                    disabled={takingNow === med.id}
-                    className="ml-2 inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors disabled:opacity-50 shrink-0"
-                    title="Record this dose as taken right now"
+              {meds.map((med) => {
+                const isDepleted =
+                  med.remainingQuantity != null && med.remainingQuantity <= 0
+                const isLoading = takingNow === med.id
+                return (
+                  <div
+                    key={med.id}
+                    className="flex justify-between items-center p-3.5 bg-bg-page rounded-xl border border-border-subtle"
                   >
-                    {takingNow === med.id ? (
-                      <Loader2 size={12} className="animate-spin" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-text-main flex items-center gap-2">
+                        {med.name}
+                        {isDepleted && (
+                          <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-500/15 text-red-600 dark:text-red-400 font-bold">
+                            <AlertTriangle size={10} />
+                            Refill Needed
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-text-muted mt-0.5 flex items-center gap-1">
+                        <Clock size={10} />
+                        {med.dosage} {med.dosageUnit}
+                        {med.frequency ? ` \u2022 ${med.frequency}` : ''}
+                      </div>
+                    </div>
+                    {isDepleted ? (
+                      <span
+                        className="ml-2 inline-flex items-center gap-1 px-2.5 py-1.5 bg-red-500/10 text-red-600 dark:text-red-400 text-xs font-bold rounded-lg shrink-0 cursor-not-allowed"
+                        title="Inventory depleted — refill before recording the next dose"
+                      >
+                        <AlertTriangle size={12} />
+                        Depleted
+                      </span>
                     ) : (
-                      <PlusCircle size={12} />
+                      <button
+                        onClick={() => handleTakeNow(med)}
+                        disabled={isLoading}
+                        className="ml-2 inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors disabled:opacity-50 shrink-0"
+                        title="Record this dose as taken right now"
+                      >
+                        {isLoading ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                          <PlusCircle size={12} />
+                        )}
+                        Take Now
+                      </button>
                     )}
-                    Take Now
-                  </button>
-                </div>
-              ))}
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>

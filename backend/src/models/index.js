@@ -71,12 +71,18 @@ User.belongsToMany(User, {
 // ──────────────────────────────────────────────
 
 // Medication ↔ Prescription
-Medication.hasMany(Prescription, { foreignKey: 'medicationId', as: 'prescriptions' });
-Prescription.belongsTo(Medication, { foreignKey: 'medicationId' });
+Medication.hasMany(Prescription, { foreignKey: { name: 'medicationId', unique: false }, as: 'prescriptions' });
+Prescription.belongsTo(Medication, { foreignKey: { name: 'medicationId', unique: false } });
 
 // Medication ↔ Adherence
-Medication.hasMany(Adherence, { foreignKey: 'medicationId', as: 'adherence' });
-Adherence.belongsTo(Medication, { foreignKey: 'medicationId' });
+// CRITICAL FIX: belongsTo() defaults to unique:true on the FK column during
+// SQLite sync({ alter: true }), which injects a STANDALONE unique constraint
+// on medicationId — separate from the composite unique index defined in
+// Adherence.js. This phantom constraint is what causes the 409 "medicationId
+// must be unique" error when a user records a second dose for the same med.
+// Explicitly setting unique:false tells Sequelize the FK is NOT a 1:1 column.
+Medication.hasMany(Adherence, { foreignKey: { name: 'medicationId', unique: false }, as: 'adherence' });
+Adherence.belongsTo(Medication, { foreignKey: { name: 'medicationId', unique: false } });
 
 // Device ↔ DeviceAccessPermission
 Device.hasMany(DeviceAccessPermission, { foreignKey: 'deviceId', as: 'accessPermissions' });

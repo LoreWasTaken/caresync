@@ -648,7 +648,15 @@ export function PrescriptionUploadWizard({ onCancel }: { onCancel: () => void })
     setTimeout(() => URL.revokeObjectURL(url), 10000)
   }, [file])
 
-  /* ---- Confirm & Save ---- */
+  /* ---- Confirm & Save ──────────────────────────────────────────
+     Translates each parsed medication into the strict shape required
+     by the new state machine:
+       - "As needed" frequency  → isPRN: true (no schedule, no endDate)
+       - any other frequency    → endDate REQUIRED. We auto-default to
+         start+30 days if the parser couldn't extract a duration, so
+         the backend's mandatory-endDate validator never fires for a
+         legitimate Rx. The user already had a chance to override
+         this in the per-row review step. */
   const handleConfirm = async () => {
     setStep('saving')
     setError(null)
@@ -658,6 +666,23 @@ export function PrescriptionUploadWizard({ onCancel }: { onCancel: () => void })
     try {
       for (let i = 0; i < editableMeds.length; i++) {
         const m = editableMeds[i]
+        const isPRN = (m.frequency || '').toLowerCase().includes('as needed')
+
+        // Default endDate fallback for non-PRN meds with missing duration:
+        // start + 30 days. Mirrors AddMedicationPage's default and keeps
+        // the backend validator happy.
+        let endDateIso: string | undefined
+        if (!isPRN) {
+          const startBase = m.startDate ? new Date(m.startDate) : new Date()
+          if (m.endDate) {
+            endDateIso = new Date(m.endDate).toISOString()
+          } else {
+            const fallback = new Date(startBase)
+            fallback.setDate(fallback.getDate() + 30)
+            endDateIso = fallback.toISOString()
+          }
+        }
+
         const payload: MedicationFormData = {
           name: m.name,
           dosage: m.dosage,
@@ -665,8 +690,12 @@ export function PrescriptionUploadWizard({ onCancel }: { onCancel: () => void })
           frequency: m.frequency,
           timesPerDay: m.timesPerDay,
           startDate: m.startDate ? new Date(m.startDate).toISOString() : undefined,
-          endDate: m.endDate ? new Date(m.endDate).toISOString() : undefined,
-          totalQuantity: m.totalQuantity ?? undefined,
+          endDate: endDateIso,
+          isPRN,
+          // Reject quantity 0 from upstream parser by clamping to undefined.
+          totalQuantity: m.totalQuantity != null && m.totalQuantity > 0
+            ? m.totalQuantity
+            : undefined,
           instructions: m.instructions || undefined,
         }
         await addMedication(payload)

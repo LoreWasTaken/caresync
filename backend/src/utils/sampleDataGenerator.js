@@ -50,6 +50,8 @@ async function generateSampleData() {
       frequency: 'daily',
       timesPerDay: 1,
       startDate: new Date(),
+      endDate: new Date(new Date().getTime() + 30 * 24 * 60 * 60 * 1000),
+      isPRN: false,
       isActive: true,
       instructions: 'Take with breakfast'
     });
@@ -65,6 +67,8 @@ async function generateSampleData() {
       frequency: 'daily',
       timesPerDay: 2,
       startDate: new Date(),
+      endDate: new Date(new Date().getTime() + 30 * 24 * 60 * 60 * 1000),
+      isPRN: false,
       isActive: true,
       instructions: 'Take with meals'
     });

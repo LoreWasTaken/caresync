@@ -12,6 +12,8 @@ import {
   Clock,
   Package,
   FileUp,
+  AlertTriangle,
+  Sparkles,
 } from 'lucide-react'
 
 export const MyMedicationsPage = () => {
@@ -121,11 +123,23 @@ export const MyMedicationsPage = () => {
 
               {/* Center: details */}
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="font-semibold text-text-main truncate">{med.name}</h3>
                   {!med.isActive && (
                     <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-yellow-500/10 text-yellow-600 font-medium">
                       inactive
+                    </span>
+                  )}
+                  {med.isPRN && (
+                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-600 dark:text-violet-400 font-medium">
+                      <Sparkles size={10} />
+                      PRN
+                    </span>
+                  )}
+                  {med.totalQuantity != null && med.remainingQuantity != null && med.remainingQuantity <= 0 && (
+                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-500/15 text-red-600 dark:text-red-400 font-bold animate-pulse">
+                      <AlertTriangle size={10} />
+                      Depleted &mdash; Refill Needed
                     </span>
                   )}
                 </div>
@@ -142,7 +156,13 @@ export const MyMedicationsPage = () => {
                     </span>
                   )}
                   {med.totalQuantity != null && (
-                    <span className="flex items-center gap-1">
+                    <span
+                      className={`flex items-center gap-1 ${
+                        med.remainingQuantity != null && med.remainingQuantity <= 0
+                          ? 'text-red-500 font-bold'
+                          : ''
+                      }`}
+                    >
                       <Package size={12} />
                       {med.remainingQuantity ?? '?'}/{med.totalQuantity} remaining
                     </span>

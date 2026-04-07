@@ -2,13 +2,30 @@
 import { useState } from 'react'
 import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { useMedicationStore, MedicationFormData } from '../../../shared/store/medicationStore'
-import { ArrowLeft, Loader2, AlertCircle, FileUp, PenLine } from 'lucide-react'
+import { ArrowLeft, Loader2, AlertCircle, FileUp, PenLine, Info } from 'lucide-react'
 import { PrescriptionUploadWizard } from '../components/PrescriptionUploadWizard'
 
 const DOSAGE_UNITS = ['mg', 'ml', 'g', 'mcg', 'IU', 'drops', 'puffs', 'units']
 const FREQUENCIES = ['Once daily', 'Twice daily', '3 times daily', 'Every 8 hours', 'Every 12 hours', 'Weekly', 'As needed']
 
+// Quick-pick presets for endDate so chronic patients don't have to
+// pick a date manually. "Indefinite" still requires a real upper bound
+// (1 year from start) so the calendar generation stays bounded.
+const DURATION_PRESETS: { label: string; days: number }[] = [
+  { label: '7 days',  days: 7 },
+  { label: '14 days', days: 14 },
+  { label: '30 days', days: 30 },
+  { label: '90 days', days: 90 },
+  { label: '6 months', days: 180 },
+  { label: '1 year', days: 365 },
+]
+
 const today = () => new Date().toISOString().slice(0, 10)
+const addDays = (iso: string, days: number) => {
+  const d = new Date(iso)
+  d.setDate(d.getDate() + days)
+  return d.toISOString().slice(0, 10)
+}
 
 export const AddMedicationPage = () => {
   const navigate = useNavigate()
@@ -26,6 +43,8 @@ export const AddMedicationPage = () => {
     frequency: 'Once daily',
     timesPerDay: 1,
     startDate: today(),
+    endDate: addDays(today(), 30), // sensible default to defeat infinite calendar
+    isPRN: false,
     instructions: '',
   })
 
@@ -35,16 +54,58 @@ export const AddMedicationPage = () => {
   const set = (field: keyof MedicationFormData, value: any) =>
     setForm((prev) => ({ ...prev, [field]: value }))
 
+  // When the user toggles PRN on, we clear endDate (it's now optional and
+  // would be misleading to show a date for an as-needed med). When they
+  // toggle it back off, restore a 30-day default so the form is valid.
+  const setIsPRN = (next: boolean) => {
+    setForm((prev) => ({
+      ...prev,
+      isPRN: next,
+      endDate: next
+        ? undefined
+        : prev.endDate || addDays(prev.startDate || today(), 30),
+      frequency: next ? 'As needed' : (prev.frequency === 'As needed' ? 'Once daily' : prev.frequency),
+    }))
+  }
+
+  const validateBeforeSubmit = (): string | null => {
+    if (!form.name?.trim()) return 'Medication name is required'
+    const dosageNum = Number(form.dosage)
+    if (!form.dosage || Number.isNaN(dosageNum) || dosageNum <= 0) {
+      return 'Dosage must be a number greater than 0'
+    }
+    if (form.totalQuantity != null && form.totalQuantity < 1) {
+      return 'Total Quantity must be at least 1'
+    }
+    if (!form.isPRN) {
+      if (!form.endDate) {
+        return 'End Date is required for scheduled medications. Tick "As Needed (PRN)" if this medication has no fixed schedule.'
+      }
+      if (form.startDate && form.endDate && new Date(form.endDate) < new Date(form.startDate)) {
+        return 'End Date must be on or after Start Date'
+      }
+    }
+    return null
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    setSubmitting(true)
 
+    const clientError = validateBeforeSubmit()
+    if (clientError) {
+      setError(clientError)
+      return
+    }
+
+    setSubmitting(true)
     try {
       await addMedication({
         ...form,
         startDate: form.startDate ? new Date(form.startDate).toISOString() : undefined,
-        endDate: form.endDate ? new Date(form.endDate).toISOString() : undefined,
+        endDate: form.isPRN
+          ? undefined
+          : form.endDate ? new Date(form.endDate).toISOString() : undefined,
       })
       navigate('/app/medications')
     } catch (err: any) {
@@ -185,6 +246,33 @@ export const AddMedicationPage = () => {
               </div>
             </div>
 
+            {/* PRN / As-Needed toggle ─────────────────────────────────
+                When ON, the medication has no fixed schedule (calendar
+                slots are not generated) and the End Date field becomes
+                hidden. The patient still records doses ad-hoc via "Take
+                Now" on the dashboard. */}
+            <label className="flex items-start gap-3 p-3.5 rounded-xl border border-border-subtle bg-bg-page cursor-pointer hover:border-brand-primary/40 transition-colors">
+              <input
+                type="checkbox"
+                checked={!!form.isPRN}
+                onChange={(e) => setIsPRN(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded accent-brand-primary cursor-pointer"
+              />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-text-main">
+                  As Needed (PRN / SOS)
+                </div>
+                <div className="text-xs text-text-muted mt-0.5 flex items-start gap-1.5">
+                  <Info size={11} className="mt-0.5 shrink-0" />
+                  <span>
+                    Tick this if the medication has no fixed schedule (e.g. painkillers taken
+                    only when needed). The calendar will not generate scheduled slots and an
+                    End Date is not required.
+                  </span>
+                </div>
+              </div>
+            </label>
+
             {/* Frequency + Times per day */}
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -193,6 +281,7 @@ export const AddMedicationPage = () => {
                   value={form.frequency}
                   onChange={(e) => set('frequency', e.target.value)}
                   className={inputCls}
+                  disabled={form.isPRN}
                 >
                   {FREQUENCIES.map((f) => (
                     <option key={f} value={f}>
@@ -210,6 +299,7 @@ export const AddMedicationPage = () => {
                   value={form.timesPerDay ?? 1}
                   onChange={(e) => set('timesPerDay', parseInt(e.target.value) || 1)}
                   className={inputCls}
+                  disabled={form.isPRN}
                 />
               </div>
             </div>
@@ -221,18 +311,50 @@ export const AddMedicationPage = () => {
                 <input
                   type="date"
                   value={form.startDate ?? ''}
-                  onChange={(e) => set('startDate', e.target.value)}
+                  onChange={(e) => {
+                    set('startDate', e.target.value)
+                    // If the new start date jumps past the current
+                    // endDate, push endDate forward by 30 days. Avoids
+                    // leaving the form in a sub-second invalid state.
+                    if (
+                      !form.isPRN &&
+                      e.target.value &&
+                      form.endDate &&
+                      new Date(form.endDate) < new Date(e.target.value)
+                    ) {
+                      set('endDate', addDays(e.target.value, 30))
+                    }
+                  }}
                   className={inputCls}
                 />
               </div>
               <div>
-                <label className={labelCls}>End Date (optional)</label>
+                <label className={labelCls}>
+                  End Date {form.isPRN ? '(not applicable)' : <span className="text-red-400">*</span>}
+                </label>
                 <input
                   type="date"
                   value={form.endDate ?? ''}
+                  min={form.startDate ?? undefined}
                   onChange={(e) => set('endDate', e.target.value)}
                   className={inputCls}
+                  disabled={form.isPRN}
+                  required={!form.isPRN}
                 />
+                {!form.isPRN && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {DURATION_PRESETS.map((p) => (
+                      <button
+                        key={p.label}
+                        type="button"
+                        onClick={() => set('endDate', addDays(form.startDate || today(), p.days))}
+                        className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md bg-brand-primary/10 text-brand-primary hover:bg-brand-primary/20 transition-colors"
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -254,10 +376,16 @@ export const AddMedicationPage = () => {
                 <label className={labelCls}>Total Quantity</label>
                 <input
                   type="number"
-                  min={0}
+                  min={1}
                   value={form.totalQuantity ?? ''}
-                  onChange={(e) => set('totalQuantity', e.target.value ? parseInt(e.target.value) : undefined)}
-                  placeholder="Optional"
+                  onChange={(e) => {
+                    const v = e.target.value ? parseInt(e.target.value) : undefined
+                    // Reject 0 / negatives at the input layer too — backend
+                    // and model both refuse, but a friendly client guard
+                    // gives instant feedback.
+                    set('totalQuantity', v != null && v < 1 ? 1 : v)
+                  }}
+                  placeholder="Optional (min 1)"
                   className={inputCls}
                 />
               </div>
